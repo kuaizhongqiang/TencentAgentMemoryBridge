@@ -8,6 +8,18 @@ const config = loadConfig()
 const app = express()
 
 app.use(express.json())
+
+// Health check before auth — unauthenticated
+app.get('/health', async (_req, res) => {
+  try {
+    const upstream = await fetch(`${config.tencentDbUrl}/health`, { method: 'GET' })
+    const upstreamOk = upstream.ok ? 'reachable' : 'error'
+    res.json({ status: 'ok', upstream: upstreamOk })
+  } catch {
+    res.json({ status: 'ok', upstream: 'unreachable' })
+  }
+})
+
 app.use(authMiddleware(config.agents))
 app.use(loggerMiddleware)
 

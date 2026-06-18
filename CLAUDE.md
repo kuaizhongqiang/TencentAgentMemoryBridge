@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 TencentAgentMemoryBridge bridges [TencentDB Agent Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory) (a 4-tier long-term memory system: L0 raw dialogue → L1 atomic facts → L2 scenes → L3 user profile) to AI agent platforms via a unified Bridge Server + platform-specific adapters.
 
-**Status**: Design phase — no source code written yet. The canonical design document is [docs/design-overview.md](docs/design-overview.md) (v0.4-draft).
+**Status**: P1-P3 implemented (bridge-server, mcp-bridge, openclaw-plugin). See [docs/design-overview.md](docs/design-overview.md) (v0.4-draft) for the canonical design.
 
 ## Collaboration Workflow
 

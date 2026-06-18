@@ -21,7 +21,7 @@ const TOOLS: Tool[] = [
       type: 'object',
       properties: {
         query: { type: 'string', description: 'Search query for relevant memories' },
-        session_key: { type: 'string', description: 'Optional session key to scope recall' },
+        session_key: { type: 'string', description: 'Session key (auto-generated if omitted)' },
       },
       required: ['query'],
     },
@@ -34,9 +34,9 @@ const TOOLS: Tool[] = [
       properties: {
         user_content: { type: 'string', description: 'User input text' },
         assistant_content: { type: 'string', description: 'Assistant response text' },
-        session_key: { type: 'string', description: 'Session key to associate the memory with' },
+        session_key: { type: 'string', description: 'Session key (auto-generated if omitted)' },
       },
-      required: ['user_content', 'assistant_content', 'session_key'],
+      required: ['user_content', 'assistant_content'],
     },
   },
   {
@@ -59,9 +59,9 @@ const TOOLS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        session_key: { type: 'string', description: 'Session key to end' },
+        session_key: { type: 'string', description: 'Session key (auto-generated if omitted)' },
       },
-      required: ['session_key'],
+      required: [],
     },
   },
 ]
@@ -73,13 +73,20 @@ const server = new Server(
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }))
 
+function resolveSession(sessionKey: string | undefined | null): string {
+  return sessionKey ?? config.sessionKey
+}
+
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params
 
   try {
     switch (name) {
       case 'recall_memory': {
-        const data = await client.recall(args?.query as string, args?.session_key as string | undefined)
+        const data = await client.recall(
+          args?.query as string,
+          resolveSession(args?.session_key as string | undefined),
+        )
         return { content: [{ type: 'text', text: JSON.stringify(data) }] }
       }
 
@@ -87,7 +94,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const data = await client.capture(
           args?.user_content as string,
           args?.assistant_content as string,
-          args?.session_key as string,
+          resolveSession(args?.session_key as string | undefined),
         )
         return { content: [{ type: 'text', text: JSON.stringify(data) }] }
       }
@@ -102,7 +109,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'end_session': {
-        const data = await client.endSession(args?.session_key as string)
+        const data = await client.endSession(
+          resolveSession(args?.session_key as string | undefined),
+        )
         return { content: [{ type: 'text', text: JSON.stringify(data) }] }
       }
 

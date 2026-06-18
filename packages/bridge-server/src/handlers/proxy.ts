@@ -23,7 +23,10 @@ export function createProxyHandler(tencentDbUrl: string) {
     try {
       const upstream = await fetch(targetUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Sender': req.sender ?? 'unknown',
+        },
         body: JSON.stringify(req.body),
       })
 
