@@ -28,7 +28,11 @@ function buildHeaders(config: MemoryBridgeConfig): Record<string, string> {
 
 async function httpPost(url: string, body: unknown, headers: Record<string, string>): Promise<unknown> {
   const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) })
-  return res.json()
+  const data = await res.json()
+  if (!res.ok) {
+    throw new Error(`Bridge server error (${res.status}): ${JSON.stringify(data)}`)
+  }
+  return data
 }
 
 export class MemoryBridgePlugin {
@@ -41,7 +45,7 @@ export class MemoryBridgePlugin {
   }
 
   private resolveSession(ctx: HookContext): string {
-    return ctx.sessionKey ?? this.resolvedSessionKey
+    return ctx.sessionKey || this.resolvedSessionKey
   }
 
   async beforePromptBuild(ctx: HookContext): Promise<unknown> {

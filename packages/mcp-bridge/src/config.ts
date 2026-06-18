@@ -24,6 +24,6 @@ export function loadConfig(): McpConfig {
     bridgeUrl,
     apiKey,
     sender,
-    sessionKey: process.env.SESSION_KEY ?? generateSessionKey(sender),
+    sessionKey: process.env.SESSION_KEY || generateSessionKey(sender),
   }
 }

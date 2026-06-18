@@ -1,5 +1,4 @@
 import { readFileSync } from 'node:fs'
-import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 export interface AgentConfig {

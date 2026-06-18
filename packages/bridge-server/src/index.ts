@@ -38,8 +38,25 @@ for (const endpoint of endpoints) {
   app.post(`/api/v1/${endpoint}`, proxyHandler)
 }
 
-app.listen(config.port, () => {
+const server = app.listen(config.port, () => {
   console.log(`Bridge server listening on port ${config.port}`)
   console.log(`Forwarding to TencentDB at ${config.tencentDbUrl}`)
 })
+
+// Graceful shutdown
+function shutdown(signal: string) {
+  console.log(`Received ${signal}, shutting down...`)
+  server.close(() => {
+    console.log('Server closed')
+    process.exit(0)
+  })
+  // Force close after 5s
+  setTimeout(() => {
+    console.error('Forced shutdown after timeout')
+    process.exit(1)
+  }, 5000).unref()
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'))
+process.on('SIGINT', () => shutdown('SIGINT'))
 

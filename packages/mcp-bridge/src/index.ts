@@ -74,7 +74,7 @@ const server = new Server(
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }))
 
 function resolveSession(sessionKey: string | undefined | null): string {
-  return sessionKey ?? config.sessionKey
+  return sessionKey || config.sessionKey
 }
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -129,3 +129,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 const transport = new StdioServerTransport()
 await server.connect(transport)
+
+// Re-export types for consumers who import the package
+export type { McpConfig } from './config.js'
+export { BridgeClient, type BridgeClientConfig } from './client.js'
