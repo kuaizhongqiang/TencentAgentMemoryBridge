@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "agent-memory": {
+      "command": "npx",
+      "args": ["@tencent-agent-memory/mcp-bridge"],
+      "env": {
+        "BRIDGE_URL": "https://your-server.com/api/v1",
+        "API_KEY": "sk-your-api-key",
+        "SENDER": "codebuddy"
+      }
+    }
+  }
+}

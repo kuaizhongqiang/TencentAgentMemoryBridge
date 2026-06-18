@@ -1,0 +1,16 @@
+{
+  "name": "tencent-agent-memory-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bridge TencentDB Agent Memory to AI agent platforms via MCP and plugins",
+  "license": "MIT",
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm -r --parallel dev",
+    "test": "pnpm -r test",
+    "lint": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
