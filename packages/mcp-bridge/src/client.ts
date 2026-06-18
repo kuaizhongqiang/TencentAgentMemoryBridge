@@ -52,7 +52,13 @@ export class BridgeClient {
       body: JSON.stringify(body),
     })
 
-    const data = await res.json()
+    const text = await res.text()
+    let data: unknown
+    try {
+      data = JSON.parse(text)
+    } catch {
+      data = { raw: text.slice(0, 500) }
+    }
     if (!res.ok) {
       throw new Error(`Bridge server error (${res.status}): ${JSON.stringify(data)}`)
     }

@@ -30,7 +30,13 @@ export function createProxyHandler(tencentDbUrl: string) {
         body: JSON.stringify(req.body),
       })
 
-      const data = await upstream.json()
+      const text = await upstream.text()
+      let data: unknown
+      try {
+        data = JSON.parse(text)
+      } catch {
+        data = { raw: text.slice(0, 500) }
+      }
       res.status(upstream.status).json(data)
     } catch (err) {
       console.error(`Proxy error [${endpoint}]:`, err)
