@@ -1,46 +1,37 @@
-import { describe, it, expect } from 'vitest'
-import { MemoryBridgePlugin } from '../index.js'
+/// <reference types="vitest/globals" />
+import { describe, it, expect, vi } from 'vitest'
 
-describe('MemoryBridgePlugin', () => {
-  const validConfig = {
-    bridgeUrl: 'http://localhost:3000/api/v1',
-    apiKey: 'sk-test',
-    sender: 'openclaw',
-  }
+vi.mock('openclaw/plugin-sdk/plugin-entry', () => ({
+  definePluginEntry: (def: any) => def,
+}))
 
-  it('creates plugin with minimal config', () => {
-    const plugin = new MemoryBridgePlugin(validConfig)
-    expect(plugin).toBeInstanceOf(MemoryBridgePlugin)
+describe('plugin entry', () => {
+  const OLD_ENV = { ...process.env }
+
+  afterEach(() => {
+    process.env = { ...OLD_ENV }
   })
 
-  it('accepts optional sessionKey in config', () => {
-    const plugin = new MemoryBridgePlugin({ ...validConfig, sessionKey: 'my-session' })
-    expect(plugin).toBeInstanceOf(MemoryBridgePlugin)
+  it('exports a default entry with register function', async () => {
+    process.env.BRIDGE_URL = 'http://localhost:3000/api/v1'
+    process.env.API_KEY = 'test'
+    process.env.SENDER = 'openclaw'
+    process.env.SESSION_KEY = 'test-session'
+
+    const mod = await import('../index.js')
+    expect(mod.default).toBeDefined()
+    expect(mod.default.id).toBe('memory-bridge')
+    expect(mod.default.name).toBe('Memory Bridge')
+    expect(typeof mod.default.register).toBe('function')
   })
 
-  it('beforePromptBuild handles empty context gracefully', async () => {
-    const plugin = new MemoryBridgePlugin(validConfig)
-    const result = await plugin.beforePromptBuild({ sessionKey: 'test' })
-    // Should fail gracefully because bridge server is not running
-    // This tests the catch block returns null
-    expect(result).toBeNull()
-  })
+  it('register handles missing env vars gracefully', async () => {
+    delete process.env.BRIDGE_URL
+    delete process.env.API_KEY
+    delete process.env.SENDER
 
-  it('afterAgentEnd handles empty context gracefully', async () => {
-    const plugin = new MemoryBridgePlugin(validConfig)
-    const result = await plugin.afterAgentEnd({ sessionKey: 'test' })
-    expect(result).toBeNull()
-  })
-
-  it('onSessionEnd handles empty context gracefully', async () => {
-    const plugin = new MemoryBridgePlugin(validConfig)
-    const result = await plugin.onSessionEnd({ sessionKey: 'test' })
-    expect(result).toBeNull()
-  })
-
-  it('resolves session key from context over config default', () => {
-    const plugin = new MemoryBridgePlugin({ ...validConfig, sessionKey: 'default-key' })
-    // Use instance to verify it doesn't crash with either source
-    expect(plugin).toBeInstanceOf(MemoryBridgePlugin)
+    const mod = await import('../index.js')
+    const api = { on: vi.fn() }
+    expect(() => mod.default.register(api)).not.toThrow()
   })
 })

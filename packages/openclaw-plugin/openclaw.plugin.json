@@ -1,0 +1,9 @@
+{
+  "id": "memory-bridge",
+  "name": "Memory Bridge",
+  "description": "Bridge agent memory to TencentDB Agent Memory via HTTP",
+  "version": "0.1.0",
+  "contracts": {
+    "hooks": ["before_prompt_build", "agent_end", "session_end"]
+  }
+}

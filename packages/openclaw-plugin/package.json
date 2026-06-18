@@ -6,13 +6,18 @@
   "description": "OpenClaw plugin bridging agent lifecycle hooks to TencentDB Agent Memory",
   "license": "MIT",
   "scripts": {
-    "build": "tsup src/index.ts --format esm --dts",
+    "build": "tsup src/index.ts --format esm --dts --external openclaw",
     "dev": "tsup src/index.ts --format esm --watch",
     "test": "vitest run"
   },
   "files": [
-    "dist"
+    "dist",
+    "openclaw.plugin.json"
   ],
+  "openclaw": {
+    "extensions": ["./dist/index.js"],
+    "manifest": "./openclaw.plugin.json"
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "tsup": "^8.4.0",
