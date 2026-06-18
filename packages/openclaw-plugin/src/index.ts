@@ -12,23 +12,34 @@ interface HookContext {
   userInput?: string;
   userText?: string;
   assistantOutput?: string;
-}
-
-function loadConfig(): PluginConfig {
-  const bridgeUrl = process.env.BRIDGE_URL;
-  const apiKey = process.env.API_KEY;
-  const sender = process.env.SENDER;
-
-  if (!bridgeUrl) throw new Error("BRIDGE_URL environment variable is required");
-  if (!apiKey) throw new Error("API_KEY environment variable is required");
-  if (!sender) throw new Error("SENDER environment variable is required");
-
-  return { bridgeUrl, apiKey, sender, sessionKey: process.env.SESSION_KEY };
+  context?: {
+    pluginConfig?: Record<string, unknown>;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
 }
 
 function generateSessionKey(sender: string): string {
   const uuid = crypto.randomUUID().slice(0, 8);
   return `${sender}-${uuid}`;
+}
+
+function readConfig(event: HookContext): PluginConfig {
+  const raw = event.context?.pluginConfig ?? {};
+  const bridgeUrl = raw["bridgeUrl"] as string | undefined;
+  const apiKey = raw["apiKey"] as string | undefined;
+  const sender = raw["sender"] as string | undefined;
+
+  if (!bridgeUrl) throw new Error("config.bridgeUrl is required");
+  if (!apiKey) throw new Error("config.apiKey is required");
+  if (!sender) throw new Error("config.sender is required");
+
+  return {
+    bridgeUrl,
+    apiKey,
+    sender,
+    sessionKey: raw["sessionKey"] as string | undefined,
+  };
 }
 
 function resolveSession(config: PluginConfig, ctx: HookContext): string {
@@ -58,17 +69,9 @@ export default definePluginEntry({
   version: "0.1.0",
 
   register(api) {
-    let config: PluginConfig;
-
-    try {
-      config = loadConfig();
-    } catch (err) {
-      console.error("[memory-bridge] Config error:", err);
-      return;
-    }
-
     api.on("before_prompt_build", async (event: HookContext) => {
       try {
+        const config = readConfig(event);
         const sessionKey = resolveSession(config, event);
         const url = `${config.bridgeUrl}/recall`;
         return await httpPost(
@@ -84,6 +87,7 @@ export default definePluginEntry({
 
     api.on("agent_end", async (event: HookContext) => {
       try {
+        const config = readConfig(event);
         const sessionKey = resolveSession(config, event);
         const url = `${config.bridgeUrl}/capture`;
         return await httpPost(
@@ -103,6 +107,7 @@ export default definePluginEntry({
 
     api.on("session_end", async (event: HookContext) => {
       try {
+        const config = readConfig(event);
         const sessionKey = resolveSession(config, event);
         const url = `${config.bridgeUrl}/session/end`;
         return await httpPost(

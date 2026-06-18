@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "agent-memory": {
+      "command": "npx",
+      "args": ["tencent-agent-memory-mcp-bridge"],
+      "env": {
+        "BRIDGE_URL": "https://memory.kuai-private.top/api/v1",
+        "API_KEY": "cbk-148109bf7ebd",
+        "SENDER": "codebuddy",
+        "SESSION_KEY": "codebuddy-test-20260618"
+      }
+    }
+  }
+}
