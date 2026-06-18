@@ -17,8 +17,8 @@ export class BridgeClient {
     }
   }
 
-  async recall(query: string, sessionKey?: string) {
-    return this.post('/recall', { query, session_key: sessionKey })
+  async recall(query: string, sessionKey?: string, opts?: { sender?: string }) {
+    return this.post('/recall', { query, session_key: sessionKey, ...(opts?.sender ? { sender: opts.sender } : {}) })
   }
 
   async capture(
@@ -36,7 +36,7 @@ export class BridgeClient {
     })
   }
 
-  async searchMemories(query: string, opts?: { limit?: number; type?: string; scene?: string }) {
+  async searchMemories(query: string, opts?: { limit?: number; type?: string; scene?: string; sender?: string }) {
     return this.post('/search/memories', { query, ...opts })
   }
 

@@ -5,6 +5,8 @@ export interface AgentConfig {
   name: string
   apiKeyHash: string
   allowedEndpoints: string[]
+  /** Whether this sender is allowed to recall/search outside its own domain. */
+  crossDomainRecall?: boolean
 }
 
 export interface AppConfig {
@@ -28,6 +30,7 @@ function parseAgent(raw: unknown): AgentConfig | null {
     name: obj.name,
     apiKeyHash: obj.apiKeyHash,
     allowedEndpoints: obj.allowedEndpoints.filter((e): e is string => typeof e === 'string'),
+    crossDomainRecall: obj.crossDomainRecall === true,
   }
 }
 

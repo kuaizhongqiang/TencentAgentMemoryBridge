@@ -10,6 +10,7 @@ declare global {
   namespace Express {
     interface Request {
       sender?: string
+      agentConfig?: AgentConfig
     }
   }
 }
@@ -45,6 +46,7 @@ export function authMiddleware(agents: AgentConfig[]) {
     }
 
     req.sender = sender
+    req.agentConfig = agent
     next()
   }
 }

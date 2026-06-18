@@ -76,7 +76,7 @@ export default definePluginEntry({
         const url = `${config.bridgeUrl}/recall`;
         return await httpPost(
           url,
-          { query: event.userText ?? event.userInput ?? "", session_key: sessionKey },
+          { query: event.userText ?? event.userInput ?? "", session_key: sessionKey, sender: config.sender },
           buildHeaders(config),
         );
       } catch (err) {
