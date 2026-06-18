@@ -1,5 +1,5 @@
 {
-  "name": "@tencent-agent-memory/mcp-bridge",
+  "name": "tencent-agent-memory-mcp-bridge",
   "version": "0.1.0",
   "type": "module",
   "description": "MCP server bridging AI agents to TencentDB Agent Memory",
@@ -25,7 +25,15 @@
     "typescript": "^5.8.0",
     "vitest": "^3.1.0"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kuaizhongqiang/TencentAgentMemoryBridge.git"
+  },
+  "homepage": "https://github.com/kuaizhongqiang/TencentAgentMemoryBridge#readme",
+  "bugs": {
+    "url": "https://github.com/kuaizhongqiang/TencentAgentMemoryBridge/issues"
+  },
   "publishConfig": {
-    "access": "public"
+    "registry": "https://registry.npmjs.org/"
   }
 }
