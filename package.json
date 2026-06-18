@@ -1,6 +1,6 @@
 {
   "name": "tencent-agent-memory-bridge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Bridge TencentDB Agent Memory to AI agent platforms via MCP and plugins",
   "license": "MIT",

@@ -1,6 +1,6 @@
 {
   "name": "@tencent-agent-memory/openclaw-plugin",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "OpenClaw plugin bridging agent lifecycle hooks to TencentDB Agent Memory",
@@ -15,7 +15,9 @@
     "openclaw.plugin.json"
   ],
   "openclaw": {
-    "extensions": ["./dist/index.js"],
+    "extensions": [
+      "./dist/index.js"
+    ],
     "manifest": "./openclaw.plugin.json"
   },
   "devDependencies": {
