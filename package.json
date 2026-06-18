@@ -4,6 +4,7 @@
   "private": true,
   "description": "Bridge TencentDB Agent Memory to AI agent platforms via MCP and plugins",
   "license": "MIT",
+  "packageManager": "pnpm@11.7.0",
   "scripts": {
     "build": "pnpm -r build",
     "dev": "pnpm -r --parallel dev",
