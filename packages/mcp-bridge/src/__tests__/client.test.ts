@@ -37,7 +37,7 @@ describe('V3MemoryClient', () => {
     ])
 
     expect(res.accepted_ids).toEqual(['m1'])
-    const [url, init] = fetchMock.mock.calls[0]
+    const [url, init] = fetchMock.mock.calls[0]!
     expect(url).toBe('https://memory.kuai-private.top/v3/conversation/add')
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer sk-gate')
     expect((init.headers as Record<string, string>)['x-tdai-service-id']).toBe('default')
@@ -58,7 +58,7 @@ describe('V3MemoryClient', () => {
     const client = new V3MemoryClient(CONFIG)
     await client.searchAtomic('query', {})
 
-    const [, init] = fetchMock.mock.calls[0]
+    const [, init] = fetchMock.mock.calls[0]!
     const body = JSON.parse(init.body as string)
     expect(body).toMatchObject({ query: 'query', session_id: CONFIG.sessionKey })
     expect(body).not.toHaveProperty('limit')
