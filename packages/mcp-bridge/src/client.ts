@@ -6,6 +6,7 @@ export interface V3ClientConfig {
   agentId: string
   userId: string
   sessionKey: string
+  taskId?: string
   timeoutMs?: number
 }
 
@@ -58,7 +59,7 @@ export interface ConversationAddData {
 export class V3MemoryClient {
   private readonly baseUrl: string
   private readonly headers: Record<string, string>
-  private readonly iso: { team_id: string; agent_id: string; user_id: string }
+  private readonly iso: { team_id: string; agent_id: string; user_id: string; task_id?: string }
   private readonly sessionKey: string
   private readonly timeoutMs: number
 
@@ -69,7 +70,12 @@ export class V3MemoryClient {
       Authorization: `Bearer ${config.apiKey}`,
       'x-tdai-service-id': config.serviceId,
     }
-    this.iso = { team_id: config.teamId, agent_id: config.agentId, user_id: config.userId }
+    this.iso = {
+      team_id: config.teamId,
+      agent_id: config.agentId,
+      user_id: config.userId,
+      ...(config.taskId ? { task_id: config.taskId } : {}),
+    }
     this.sessionKey = config.sessionKey
     this.timeoutMs = config.timeoutMs ?? 15000
   }

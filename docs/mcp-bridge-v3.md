@@ -25,6 +25,7 @@ mcp-bridge v3 是 MCP（Model Context Protocol）服务器，把 AI Agent 的记
 | `AGENT_ID` | ✅ | v3 隔离：agent id（每平台一个） |
 | `USER_ID` | ✅ | v3 隔离：user id |
 | `USER_KEY` | ❌ | 该 agent 的 user_key（meta 面鉴权用，可选） |
+| `TASK_ID` | ❌ | task_id（项目级区分）；未设则**自动从项目路径派生**（cwd 目录名） |
 | `SESSION_KEY` | ❌ | 默认 session key；缺省自动生成 `<AGENT_ID>-<YYYY-MM-DD>` |
 | `TIMEOUT_MS` | ❌ | 请求超时（毫秒，默认 15000） |
 
@@ -52,6 +53,18 @@ mcp-bridge v3 是 MCP（Model Context Protocol）服务器，把 AI Agent 的记
 ```
 
 > ⚠️ 不要填真实 key 到仓库文件；通过本机 `.env`（已被 `.gitignore` 排除）或 MCP settings 的 env 字段注入。
+
+### task_id（项目级隔离）
+
+mcp-bridge 支持 **task_id** 做项目级区分：
+
+- **显式设置**：`TASK_ID=<project-name>` 环境变量
+- **自动派生**：未设时读 `process.cwd()`（Claude Code 启动 MCP 时的项目目录）取目录名，如 `TencentAgentMemoryBridge`
+
+写入（`conversation/add`）和召回（`atomic/search`）都会带 `task_id`：
+
+- **L1 事实按项目隔离**（项目 A 的事实不进项目 B 的召回）
+- **L3 persona / L2 场景仍跨项目共享**（按 team+agent 维度）
 
 ## 工具
 
