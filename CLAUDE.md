@@ -7,7 +7,7 @@ TencentAgentMemoryBridge 桥接 TencentDB Agent Memory（**团队版 v2.0.0**，
 ## 协作模型
 
 - 我（Claude Code）：写代码、管 PR、合并、发布
-- CodeBuddy / OpenClaw：测试 mcp-bridge / openclaw-plugin，经 GitHub Issues 提 Bug
+- CodeBuddy / OpenClaw：测试 mcp-bridge / OpenClaw 官方插件接入，经 GitHub Issues 提 Bug
 - Issue/PR 模板在 `.github/`；发布统一版本号
 
 ## 架构
@@ -30,6 +30,8 @@ Claude Code 指向 MemoryProxy（`ANTHROPIC_BASE_URL`）后记忆自动处理，
 ## 文档
 
 - [docs/team-edition-role-model.md](docs/team-edition-role-model.md) — 团队版三角色模型（权威）
+- [docs/mcp-bridge-v3.md](docs/mcp-bridge-v3.md) — mcp-bridge v3 使用指南
+- [docs/openclaw-plugin-v3.md](docs/openclaw-plugin-v3.md) — OpenClaw 官方插件接入
 - [docs/design-overview.md](docs/design-overview.md) — 旧架构设计（已过时，仅参考）
 
 ## 命令
@@ -37,5 +39,4 @@ Claude Code 指向 MemoryProxy（`ANTHROPIC_BASE_URL`）后记忆自动处理，
 ```bash
 pnpm install / build / test
 pnpm --filter mcp-bridge dev
-pnpm --filter openclaw-plugin build
 ```
