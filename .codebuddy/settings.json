@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node scripts/stop-memory-store-codebuddy.mjs",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

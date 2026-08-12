@@ -1,14 +1,19 @@
 {
   "mcpServers": {
     "agent-memory": {
+      "type": "stdio",
       "command": "npx",
-      "args": ["tencent-agent-memory-mcp-bridge"],
+      "args": ["-y", "tencent-agent-memory-mcp-bridge"],
       "env": {
-        "BRIDGE_URL": "https://memory.kuai-private.top/api/v1",
-        "API_KEY": "cbk-148109bf7ebd",
-        "SENDER": "codebuddy",
-        "SESSION_KEY": "codebuddy-test-20260618"
-      }
+        "MEMORY_ENDPOINT": "https://memory.kuai-private.top",
+        "API_KEY": "<gate-api-key>",
+        "SERVICE_ID": "default",
+        "TEAM_ID": "team-w7eai9w6kc",
+        "AGENT_ID": "agt-w7entnc8iw",
+        "USER_ID": "usr-w7easao7jg",
+        "USER_KEY": "<codebuddy-user-key>"
+      },
+      "description": "Tencent Agent Memory Bridge - 团队版记忆系统 (v3)"
     }
   }
 }

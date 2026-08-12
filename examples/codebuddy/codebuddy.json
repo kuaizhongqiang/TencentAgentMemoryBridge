@@ -9,7 +9,8 @@
         "SERVICE_ID": "default",
         "TEAM_ID": "team-w7eai9w6kc",
         "AGENT_ID": "agt-w7entnc8iw",
-        "USER_ID": "usr-w7easao7jg"
+        "USER_ID": "usr-w7easao7jg",
+        "USER_KEY": "<codebuddy-user-key>"
       }
     }
   }

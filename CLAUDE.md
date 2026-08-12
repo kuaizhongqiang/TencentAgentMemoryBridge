@@ -27,6 +27,8 @@ Claude Code 指向 MemoryProxy（`ANTHROPIC_BASE_URL`）后记忆自动处理，
 - **身份**：`x-team-id` / `x-agent-id` / `x-task-id` header 预选
 - **前置**：需完成迁移步骤（role-model §10）后生效
 
+> 本仓库 `.claude` 实际走 **mcp-bridge + Stop hook** 自动入库：`scripts/stop-memory-store.mjs` 在每次响应结束后把最后一轮写入 L0（凭据读 `.claude/settings.local.json` → `mcpServers.agent-memory.env`），无需模型手动调 `store_memory`（去重 state 在 `.claude/.memory-store-state.json`）。模型仍按需调用 `recall_memory` / `search_memories`。
+
 ## 文档
 
 - [docs/team-edition-role-model.md](docs/team-edition-role-model.md) — 团队版三角色模型（权威）
