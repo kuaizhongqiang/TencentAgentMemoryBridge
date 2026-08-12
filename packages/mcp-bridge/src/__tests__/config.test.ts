@@ -41,6 +41,19 @@ describe('loadConfig', () => {
     expect(config.sessionKey).toBe('my-session')
   })
 
+  it('uses TASK_ID when set', () => {
+    process.env.TASK_ID = 'projA'
+    const config = loadConfig()
+    expect(config.taskId).toBe('projA')
+  })
+
+  it('derives task_id from cwd when TASK_ID unset', () => {
+    delete process.env.TASK_ID
+    const config = loadConfig()
+    const expected = process.cwd().split(/[\\/]/).filter(Boolean).pop()
+    expect(config.taskId).toBe(expected)
+  })
+
   it('reads optional USER_KEY', () => {
     process.env.USER_KEY = 'sk-mem-agent'
     expect(loadConfig().userKey).toBe('sk-mem-agent')

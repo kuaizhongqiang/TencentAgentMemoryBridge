@@ -10,6 +10,7 @@ const CONFIG = {
   agentId: 'agt-test',
   userId: 'usr-test',
   sessionKey: 'agt-test-2026-08-12',
+  taskId: 'TencentAgentMemoryBridge',
   timeoutMs: 5000,
 }
 
@@ -46,6 +47,7 @@ describe('V3MemoryClient', () => {
       team_id: 'team-test',
       agent_id: 'agt-test',
       user_id: 'usr-test',
+      task_id: 'TencentAgentMemoryBridge',
       session_id: 'agt-test-2026-08-12',
     })
     expect(body.messages).toHaveLength(2)

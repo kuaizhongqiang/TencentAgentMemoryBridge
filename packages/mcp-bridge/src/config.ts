@@ -13,6 +13,8 @@ export interface McpConfig {
   userId: string
   /** 该 agent 的 user_key（可选，用于 meta 面鉴权） */
   userKey?: string
+  /** task_id（可选）：项目级区分；未配则从项目路径自动派生 */
+  taskId?: string
   /** 默认 session key；未配则按 agentId+日期生成 */
   sessionKey: string
   /** 单次请求超时（毫秒） */
@@ -22,6 +24,17 @@ export interface McpConfig {
 function generateSessionKey(agentId: string): string {
   const today = new Date().toISOString().slice(0, 10)
   return `${agentId}-${today}`
+}
+
+/**
+ * 按项目路径自动派生 task_id。
+ * MCP stdio 服务由 Claude Code 启动，process.cwd() 即当前项目目录，
+ * 取目录名作为项目级 task_id（如 TencentAgentMemoryBridge）。
+ */
+function deriveTaskIdFromCwd(): string {
+  const cwd = process.cwd()
+  const base = cwd.split(/[\\/]/).filter(Boolean).pop()?.trim()
+  return base || 'default'
 }
 
 export function loadConfig(): McpConfig {
@@ -57,6 +70,7 @@ export function loadConfig(): McpConfig {
     agentId: agentId!,
     userId: userId!,
     userKey: process.env.USER_KEY || undefined,
+    taskId: process.env.TASK_ID || deriveTaskIdFromCwd(),
     sessionKey: process.env.SESSION_KEY || generateSessionKey(agentId!),
     timeoutMs,
   }
