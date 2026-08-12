@@ -4,9 +4,12 @@
       "command": "npx",
       "args": ["tencent-agent-memory-mcp-bridge"],
       "env": {
-        "BRIDGE_URL": "https://your-server.com/api/v1",
-        "API_KEY": "sk-your-api-key",
-        "SENDER": "claude-code"
+        "MEMORY_ENDPOINT": "https://memory.kuai-private.top",
+        "API_KEY": "<gate-api-key>",
+        "SERVICE_ID": "default",
+        "TEAM_ID": "<team-id>",
+        "AGENT_ID": "<agent-id>",
+        "USER_ID": "<user-id>"
       }
     }
   }

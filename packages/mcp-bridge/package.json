@@ -1,8 +1,8 @@
 {
   "name": "tencent-agent-memory-mcp-bridge",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
-  "description": "MCP server bridging AI agents to TencentDB Agent Memory",
+  "description": "MCP server bridging AI agents to TencentDB Agent Memory (team edition v3)",
   "license": "MIT",
   "bin": {
     "mcp-bridge": "dist/index.js"
