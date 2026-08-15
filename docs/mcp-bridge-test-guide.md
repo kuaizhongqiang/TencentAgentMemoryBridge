@@ -1,5 +1,9 @@
 # CodeBuddy MCP Bridge 测试指南
 
+> ⚠️ **已过时（v0.2 遗留）**：本指南针对已退役的 **bridge-server** 与已移除的 `end_session` 工具。
+> 团队版 v3 的 mcp-bridge 直连 MemoryCore `/v3/*`（无 bridge-server、无 end_session、无 sender），
+> 测试方法见 [mcp-bridge-v3.md](mcp-bridge-v3.md) 与 [deepseek-harness-v3.md](deepseek-harness-v3.md)。
+
 **仓库地址**：https://github.com/kuaizhongqiang/TencentAgentMemoryBridge
 
 ---

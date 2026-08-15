@@ -1,5 +1,8 @@
 # Claude Code 快速配置
 
+> ⚠️ **已过时（v0.2 遗留）**：本指南基于已退役的 **bridge-server**（`BRIDGE_URL` / `SENDER` / `end_session` 均已移除）。
+> 团队版 v3 接入见 [docs/mcp-bridge-v3.md](../../docs/mcp-bridge-v3.md)（mcp-bridge 直连 `/v3/*`，v3 隔离三元组）。
+
 部署此桥接服务的完整指南。
 
 ---

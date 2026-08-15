@@ -57,7 +57,15 @@ if (!endpoint || !apiKey || !serviceId || !teamId || !agentId || !userId) {
   process.exit(0)
 }
 
-const taskId = env.TASK_ID || path.basename(cwd) || 'default'
+// task_id 与身份 id 严格分离：显式 TASK_ID 优先，否则按项目目录名派生；
+// 拒绝身份前缀（agt-/team-/usr-/uky-/sk-），防止把 AGENT_ID 等当 task_id 用。
+const IDENTITY_PREFIX = /^(agt-|team-|usr-|uky-|sk-mem-|sk-|key-)/i
+const taskIdRaw = env.TASK_ID || path.basename(cwd) || 'default'
+const taskId = taskIdRaw.trim()
+if (!taskId || IDENTITY_PREFIX.test(taskId)) {
+  console.error(`[memory-stop-hook] task_id 非法（'${taskIdRaw}'）：task_id 是项目级标签（如项目目录名），不能用身份 id（agt-/team-/usr-/sk- 前缀）。跳过`)
+  process.exit(0)
+}
 const sessionKey = env.SESSION_KEY || sessionId || `${agentId}-${new Date().toISOString().slice(0, 10)}`
 
 // ---------- 3. 从 transcript 提取最后一轮 ----------

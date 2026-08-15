@@ -13,7 +13,7 @@ export interface McpConfig {
   userId: string
   /** 该 agent 的 user_key（可选，用于 meta 面鉴权） */
   userKey?: string
-  /** task_id（可选）：项目级区分；未配则从项目路径自动派生 */
+  /** task_id（可选）：项目级隔离标签（自由字符串，如项目目录名）。与身份 id（team/agent/user）严格分离，拒绝 agt-/team-/usr- 等身份前缀；未配则从项目路径自动派生 */
   taskId?: string
   /** 默认 session key；未配则按 agentId+日期生成 */
   sessionKey: string
@@ -28,13 +28,38 @@ function generateSessionKey(agentId: string): string {
 
 /**
  * 按项目路径自动派生 task_id。
- * MCP stdio 服务由 Claude Code 启动，process.cwd() 即当前项目目录，
- * 取目录名作为项目级 task_id（如 TencentAgentMemoryBridge）。
+ * MCP stdio 服务由客户端（Claude Code / CodeBuddy / DeepSeek Harness 等）启动，
+ * process.cwd() 即当前项目目录，取目录名作为项目级 task_id（如 TencentAgentMemoryBridge）。
+ *
+ * task_id 语义：**项目级隔离标签**（自由字符串），与身份 id 严格分离——
+ *   - team_id / agent_id / user_id = 身份（meta 面注册实体，形如 agt-xxx / team-xxx / usr-xxx）
+ *   - task_id = 项目级标签（目录名或显式 TASK_ID），绝不是身份 id
  */
 function deriveTaskIdFromCwd(): string {
   const cwd = process.cwd()
   const base = cwd.split(/[\\/]/).filter(Boolean).pop()?.trim()
   return base || 'default'
+}
+
+/**
+ * 身份 id 前缀白名单——这些前缀属于 meta 面实体，永远不能当 task_id 用。
+ * 防止把 AGENT_ID（agt-...）/ TEAM_ID（team-...）/ USER_ID（usr-...）/
+ * user_key（sk-mem-... / uky-...）/ 网关门禁 key 误配进 TASK_ID，造成项目级
+ * 隔离被身份 id 污染（所有项目共享同一个"task"）。
+ */
+const IDENTITY_PREFIXES = /^(agt-|team-|usr-|uky-|sk-mem-|sk-|key-)/i
+
+function assertValidTaskId(taskId: string, source: 'TASK_ID' | 'cwd'): string {
+  const trimmed = taskId.trim()
+  if (!trimmed) throw new Error('TASK_ID resolved to an empty string')
+  if (IDENTITY_PREFIXES.test(trimmed)) {
+    throw new Error(
+      `Invalid task_id '${trimmed}' (from ${source}): task_id is a project-level label and must NOT be an identity id. ` +
+        `Do not put AGENT_ID (agt-*), TEAM_ID (team-*), USER_ID (usr-*) or a key (sk-mem-*/uky-*) here. ` +
+        `Use a project name, e.g. TASK_ID=my-project or the default cwd-derived name.`,
+    )
+  }
+  return trimmed
 }
 
 export function loadConfig(): McpConfig {
@@ -62,6 +87,9 @@ export function loadConfig(): McpConfig {
   const timeoutRaw = Number(process.env.TIMEOUT_MS ?? 15000)
   const timeoutMs = Number.isFinite(timeoutRaw) && timeoutRaw > 0 ? timeoutRaw : 15000
 
+  // task_id：显式 TASK_ID 优先，否则从项目路径（cwd 目录名）派生；两者都做防混用校验
+  const taskId = assertValidTaskId(process.env.TASK_ID ?? deriveTaskIdFromCwd(), process.env.TASK_ID ? 'TASK_ID' : 'cwd')
+
   return {
     endpoint: endpoint!,
     apiKey: apiKey!,
@@ -70,7 +98,7 @@ export function loadConfig(): McpConfig {
     agentId: agentId!,
     userId: userId!,
     userKey: process.env.USER_KEY || undefined,
-    taskId: process.env.TASK_ID || deriveTaskIdFromCwd(),
+    taskId,
     sessionKey: process.env.SESSION_KEY || generateSessionKey(agentId!),
     timeoutMs,
   }

@@ -1,0 +1,31 @@
+# DeepSeek Harness (DSH) — 接入 TencentDB Agent Memory（团队版 v3）
+#
+# 把本文件内容合并到 DSH profile 的 cordis.patch.yml
+# （Windows 默认位置：%USERPROFILE%\.dsh\profiles\<profile>\cordis.patch.yml）
+# 保存后 HMR 热生效，无需重启 DSH；新会话即可看到 mcp__agent-memory__* 工具。
+#
+# 身份与项目（严格分离，禁止混用）：
+#   - TEAM_ID / AGENT_ID / USER_ID = 身份（meta 面注册实体，agt-*/team-*/usr-*），跨项目不变
+#   - TASK_ID                       = 项目级隔离标签（项目名）；不设则从 MCP 子进程 cwd 自动派生。
+#     绝不能用身份 id 当 task_id（mcp-bridge >= 0.4.0 启动即拒绝 agt-/team-/usr-/sk- 前缀）。
+#
+# ⚠️ API_KEY / USER_KEY 是真实密钥：示例里用占位符，请替换成本机 mem-agent-keys-*.md 里的值；
+#    cordis.patch.yml 在用户目录（不进仓库），可以直接写真实值。
+
+- id: mcp-agent-memory
+  name: '@deepseek-ai/dsh-mcp-client'
+  config:
+    serverName: agent-memory
+    transport: stdio
+    command: npx
+    args: ['-y', 'tencent-agent-memory-mcp-bridge']
+    env:
+      MEMORY_ENDPOINT: https://memory.kuai-private.top
+      API_KEY: '<gate-api-key>'
+      SERVICE_ID: default
+      TEAM_ID: '<team-id>'
+      AGENT_ID: '<deepseek-harness-agent-id>'
+      USER_ID: '<user-id>'
+      USER_KEY: '<deepseek-harness-user-key>'
+      # TASK_ID: '<project-name>'   # 可选；缺省自动从 cwd 派生（项目目录名）
+    toolCallTimeoutMs: 30000
