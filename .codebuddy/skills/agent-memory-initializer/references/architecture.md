@@ -12,9 +12,15 @@
 
 team/agent/user 三元组替代旧 sender 隔离：
 
-- **同 team 同 user 不同 agent** → 独立记忆域（如 claude-code vs codebuddy vs openclaw）
+- **同 team 同 user 不同 agent** → 独立记忆域（如 claude-code vs codebuddy vs openclaw vs deepseek-harness）
 - **MemoryProxy**（透明代理）：Claude Code / WorkBuddy 用，自动回流 L0
-- **mcp-bridge**（MCP 工具）：CodeBuddy IDE / CLI 用，需显式或 Hook 自动存档
+- **mcp-bridge**（MCP 工具）：CodeBuddy IDE / CLI / DeepSeek Harness 用，需显式或 Hook 自动存档
+
+## task_id（项目级隔离，与身份严格分离）
+
+- `task_id` 是**项目级隔离标签**（如项目目录名 / 显式 `TASK_ID`），L1 事实按它隔离召回；**不是身份 id**
+- 绝不把 `AGENT_ID`（`agt-*`）/ `TEAM_ID`（`team-*`）/ `USER_ID`（`usr-*`）/ key 当 `task_id`——mcp-bridge ≥ 0.4.0 启动即拒绝这类前缀
+- 未设 `TASK_ID` 时自动从项目路径（cwd 目录名）派生，每项目不同
 
 ## 数据面
 

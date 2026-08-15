@@ -1,7 +1,7 @@
 # CodeBuddy MCP 安装 / 更新指南
 
 > **目标**: 让 CodeBuddy 自己能安装或更新 `agent-memory` MCP（连接团队版记忆 `MemoryCore /v3/*`）
-> **版本**: mcp-bridge ≥ 0.3.1 · 本指南面向 CodeBuddy 作为接入方
+> **版本**: mcp-bridge ≥ 0.4.0 · 本指南面向 CodeBuddy 作为接入方
 
 ---
 
@@ -19,7 +19,7 @@
 
 - MemoryCore Gateway 公网可达：`https://memory.kuai-private.top`
 - 一份有效的**门禁 key**（`API_KEY`）和 **CodeBuddy 的 user_key**（`USER_KEY`，可选）
-- 当前最新版本：`0.3.1`（`npm view tencent-agent-memory-mcp-bridge version` 可查）
+- 当前最新版本：`0.4.0`（`npm view tencent-agent-memory-mcp-bridge version` 可查；0.4.0 起校验 task_id 拒绝身份前缀、工具结果回显 `_context`）
 
 ## 3. 配置（CodeBuddy 身份）
 

@@ -150,7 +150,8 @@ Memory Hub
 | **Claude Code** | MemoryProxy | Anthropic `/v1/messages` | URL `/{agent}/{spaceId}/v1/messages` + header 预选 / 首轮表单 |
 | **WorkBuddy** | MemoryProxy | OpenAI `/v1/chat/completions` | URL `/{agent}/{spaceId}/v1/chat/completions` + header / 表单 |
 | **OpenClaw** | 官方 openclaw-plugin | HTTP `/v3/*`（SDK） | 插件静态配置 `teamId / agentId / userId` |
-| **MCP-only 客户端** | mcp-bridge（v3 重写） | MCP ↔ MemoryCore `/v3/*` | 客户端配置 `TEAM_ID / AGENT_ID / USER_ID` |
+| **MCP-only 客户端** | mcp-bridge（v3 重写） | MCP ↔ MemoryCore `/v3/*` | 客户端配置 `TEAM_ID / AGENT_ID / USER_ID`（+ 可选 `TASK_ID`） |
+| **DeepSeek Harness** | mcp-bridge（DSH 原生 MCP 客户端 `@deepseek-ai/dsh-mcp-client`） | MCP ↔ MemoryCore `/v3/*` | DSH `cordis.patch.yml` 插件 env 配置 `TEAM_ID / AGENT_ID / USER_ID`；模型看到 `mcp__agent-memory__*` 工具 |
 
 ### 6.3 运行时身份定义（MemoryProxy 三种机制）
 

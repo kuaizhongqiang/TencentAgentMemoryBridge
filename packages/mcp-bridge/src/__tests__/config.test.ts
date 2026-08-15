@@ -54,6 +54,31 @@ describe('loadConfig', () => {
     expect(config.taskId).toBe(expected)
   })
 
+  it('rejects an agent id (agt-*) as TASK_ID', () => {
+    process.env.TASK_ID = 'agt-25k8snomqe'
+    expect(() => loadConfig()).toThrow(/must NOT be an identity id/)
+  })
+
+  it('rejects a team id (team-*) as TASK_ID', () => {
+    process.env.TASK_ID = 'team-w7eai9w6kc'
+    expect(() => loadConfig()).toThrow(/must NOT be an identity id/)
+  })
+
+  it('rejects a user id (usr-*) as TASK_ID', () => {
+    process.env.TASK_ID = 'usr-w7easao7jg'
+    expect(() => loadConfig()).toThrow(/must NOT be an identity id/)
+  })
+
+  it('rejects a user key (sk-mem-*) as TASK_ID', () => {
+    process.env.TASK_ID = 'sk-mem-9hOykh5a1okxrVDRWsN3l_5jWNrK4hN6'
+    expect(() => loadConfig()).toThrow(/must NOT be an identity id/)
+  })
+
+  it('rejects an empty TASK_ID', () => {
+    process.env.TASK_ID = '   '
+    expect(() => loadConfig()).toThrow(/empty string/)
+  })
+
   it('reads optional USER_KEY', () => {
     process.env.USER_KEY = 'sk-mem-agent'
     expect(loadConfig().userKey).toBe('sk-mem-agent')

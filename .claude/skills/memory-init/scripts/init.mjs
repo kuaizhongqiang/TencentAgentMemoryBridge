@@ -72,7 +72,18 @@ const identity = {
   userId: env.USER_ID,
   userKey: env.USER_KEY,
 }
-const taskId = env.TASK_ID || path.basename(projectDir) || 'default' // 与 mcp-bridge deriveTaskIdFromCwd 一致
+// task_id 与身份 id 严格分离：显式 TASK_ID 优先，否则按目录名派生；
+// 拒绝身份前缀（agt-/team-/usr-/uky-/sk-），防止把 AGENT_ID 等当 task_id 用。
+const IDENTITY_PREFIX = /^(agt-|team-|usr-|uky-|sk-mem-|sk-|key-)/i
+const taskIdRaw = env.TASK_ID || path.basename(projectDir) || 'default' // 与 mcp-bridge deriveTaskIdFromCwd 一致
+const taskId = taskIdRaw.trim()
+if (!taskId) {
+  add('task_id.valid', false, 'task_id 解析为空')
+} else if (IDENTITY_PREFIX.test(taskId)) {
+  add('task_id.valid', false, `task_id='${taskId}' 是身份 id 前缀（agt-/team-/usr-/sk- 等）——不允许！task_id 应是项目名（如 ${path.basename(projectDir)}），不是 AGENT_ID/TEAM_ID/USER_ID/key。请改 TASK_ID 或检查环境变量。`)
+} else {
+  add('task_id.valid', true, `${taskId}（${env.TASK_ID ? '显式 TASK_ID' : '目录名派生'}）`)
+}
 report.identity = identity
 report.task_id = taskId
 

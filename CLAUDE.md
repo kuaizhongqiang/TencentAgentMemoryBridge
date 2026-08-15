@@ -10,12 +10,25 @@ TencentAgentMemoryBridge 桥接 TencentDB Agent Memory（**团队版 v2.0.0**，
 - CodeBuddy / OpenClaw：测试 mcp-bridge / OpenClaw 官方插件接入，经 GitHub Issues 提 Bug
 - Issue/PR 模板在 `.github/`；发布统一版本号
 
+## 与 Server Agent 的交接（2026-08-15，PR #39）
+
+- **mcp-bridge 0.4.0 已发布 npm latest**：新增 task_id 防混用校验（拒绝 `agt-`/`team-`/`usr-`/`sk-` 前缀）+ 工具结果 `_context` 回显隔离域。`npx` 方式自动命中新版；全局安装需 `npm install -g tencent-agent-memory-mcp-bridge@latest`
+- **新增 agent `deepseek-harness`**：`agt-25k8snomqe`（team=`team-w7eai9w6kc` / user=`usr-w7easao7jg`），L0 每轮对话自动入库（[scripts/dsh-memory-autostore.mjs](scripts/dsh-memory-autostore.mjs)，扫描 `~/.dsh/sessions` 会话日志）
+- **task_id 约定**：数据面**字符串标签 = 项目目录名**（cwd 派生，非 meta 面 task 实体）；身份 id（`agt-*`/`team-*`/`usr-*`/`sk-*`）**禁止**用作 task_id（mcp-bridge ≥0.4.0 启动即拒绝）
+- **Server（MemoryCore Gateway）无需改动**；测试期间网关留有少量测试 L0（system32 / 冒烟数据，可忽略或清理）
+
 ## 架构
 
 - **MemoryProxy**（团队版）：Claude Code/WorkBuddy 接入，URL `/{agent}/{spaceId}/v1/*` + header 预选（`x-team-id`/`x-agent-id`）
 - **openclaw-plugin**（官方）：OpenClaw 接入，静态配置 `teamId/agentId/userId`
-- **mcp-bridge**（保留，重写对齐 v3）：MCP-only 客户端 → MemoryCore `/v3/*`（官方 SDK），配置 `TEAM_ID/AGENT_ID/USER_ID`
+- **mcp-bridge**（保留，重写对齐 v3）：MCP-only 客户端 → MemoryCore `/v3/*`，配置 `TEAM_ID/AGENT_ID/USER_ID`（+ 可选 `TASK_ID`）；接入方含 Claude Code / CodeBuddy / **DeepSeek Harness**（DSH 原生 MCP 客户端，见 [docs/deepseek-harness-v3.md](docs/deepseek-harness-v3.md)）
 - ~~bridge-server~~ **已退役**：旧 sender 鉴权/转发被团队版自带鉴权取代
+
+## task_id 与身份（严格分离）
+
+- `team_id` / `agent_id` / `user_id` = **身份**（meta 面注册实体，`agt-*` / `team-*` / `usr-*`），跨项目不变
+- `task_id` = **项目级隔离标签**（项目目录名或显式 `TASK_ID`），每项目不同
+- mcp-bridge ≥ 0.4.0 启动时拒绝 `agt-`/`team-`/`usr-`/`sk-` 前缀的 `task_id`——**不要把身份 id 当 task_id 用**
 
 ## 记忆（MemoryProxy 透明回流）
 
@@ -28,11 +41,14 @@ Claude Code 指向 MemoryProxy（`ANTHROPIC_BASE_URL`）后记忆自动处理，
 - **前置**：需完成迁移步骤（role-model §10）后生效
 
 > 本仓库 `.claude` 实际走 **mcp-bridge + Stop hook** 自动入库：`scripts/stop-memory-store.mjs` 在每次响应结束后把最后一轮写入 L0（凭据读 `.claude/settings.local.json` → `mcpServers.agent-memory.env`），无需模型手动调 `store_memory`（去重 state 在 `.claude/.memory-store-state.json`）。模型仍按需调用 `recall_memory` / `search_memories`。
+>
+> DeepSeek Harness 走 **mcp-bridge + 守护脚本** 自动入库：`scripts/dsh-memory-autostore.mjs` 监听 `~/.dsh/sessions` 的会话日志（`turn/end` 事件）自动提交每轮对话（凭据复用 `~/.dsh/profiles/web/cordis.patch.yml` → `mcp-agent-memory.env`，task_id 从会话 cwd 派生）。
 
 ## 文档
 
 - [docs/team-edition-role-model.md](docs/team-edition-role-model.md) — 团队版三角色模型（权威）
 - [docs/mcp-bridge-v3.md](docs/mcp-bridge-v3.md) — mcp-bridge v3 使用指南
+- [docs/deepseek-harness-v3.md](docs/deepseek-harness-v3.md) — DeepSeek Harness 接入指南
 - [docs/openclaw-plugin-v3.md](docs/openclaw-plugin-v3.md) — OpenClaw 官方插件接入
 - [docs/design-overview.md](docs/design-overview.md) — 旧架构设计（已过时，仅参考）
 
