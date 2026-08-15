@@ -10,6 +10,13 @@ TencentAgentMemoryBridge 桥接 TencentDB Agent Memory（**团队版 v2.0.0**，
 - CodeBuddy / OpenClaw：测试 mcp-bridge / OpenClaw 官方插件接入，经 GitHub Issues 提 Bug
 - Issue/PR 模板在 `.github/`；发布统一版本号
 
+## 与 Server Agent 的交接（2026-08-15，PR #39）
+
+- **mcp-bridge 0.4.0 已发布 npm latest**：新增 task_id 防混用校验（拒绝 `agt-`/`team-`/`usr-`/`sk-` 前缀）+ 工具结果 `_context` 回显隔离域。`npx` 方式自动命中新版；全局安装需 `npm install -g tencent-agent-memory-mcp-bridge@latest`
+- **新增 agent `deepseek-harness`**：`agt-25k8snomqe`（team=`team-w7eai9w6kc` / user=`usr-w7easao7jg`），L0 每轮对话自动入库（[scripts/dsh-memory-autostore.mjs](scripts/dsh-memory-autostore.mjs)，扫描 `~/.dsh/sessions` 会话日志）
+- **task_id 约定**：数据面**字符串标签 = 项目目录名**（cwd 派生，非 meta 面 task 实体）；身份 id（`agt-*`/`team-*`/`usr-*`/`sk-*`）**禁止**用作 task_id（mcp-bridge ≥0.4.0 启动即拒绝）
+- **Server（MemoryCore Gateway）无需改动**；测试期间网关留有少量测试 L0（system32 / 冒烟数据，可忽略或清理）
+
 ## 架构
 
 - **MemoryProxy**（团队版）：Claude Code/WorkBuddy 接入，URL `/{agent}/{spaceId}/v1/*` + header 预选（`x-team-id`/`x-agent-id`）
