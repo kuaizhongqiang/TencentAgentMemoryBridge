@@ -59,7 +59,7 @@ function loadCredsFromCordis(profileDir) {
   const patchPath = join(profileDir, 'cordis.patch.yml')
   try {
     const yaml = readFileSync(patchPath, 'utf8')
-    const m = yaml.match(/id:\s*mcp-agent-memory[\s\S]*?env:[\s\S]*?((?:[ \t]+[A-Z_]+:.*\n?)+)/)
+    const m = yaml.match(/id:\s*mcp-agent-memory[\s\S]*?env:[\s\S]*?((?:[ \t]+[A-Z_]+:[^\r\n]*\r?\n?)+)/)
     if (m) {
       for (const line of m[1].split('\n')) {
         const kv = line.match(/^\s+([A-Z_]+):\s*(.*?)\s*$/)

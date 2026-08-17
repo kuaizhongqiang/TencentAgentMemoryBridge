@@ -30,22 +30,28 @@ npm install -g tencent-agent-memory-mcp-bridge@latest
 
 找到 DSH profile 配置（Windows 默认 `%USERPROFILE%\.dsh\profiles\<profile>\cordis.patch.yml`），追加：
 
+> ⚠️ **必须用 `- insert:` 追加新条目**：cordis patch 层里，不带 insert 的 `- id: <x>`
+> 是"覆盖已有行"语义——目标行不存在会被静默跳过（工具不出现）。insert 不带 id
+> 才表示向顶层条目列表追加新插件行。
+
 ```yaml
-- id: mcp-agent-memory
-  name: '@deepseek-ai/dsh-mcp-client'
-  config:
-    serverName: agent-memory
-    transport: stdio
-    command: npx
-    args: ['-y', 'tencent-agent-memory-mcp-bridge']
-    env:
-      MEMORY_ENDPOINT: https://memory.kuai-private.top
-      API_KEY: '<gate-api-key>'
-      SERVICE_ID: default
-      TEAM_ID: '<team-id>'
-      AGENT_ID: '<deepseek-harness-agent-id>'
-      USER_ID: '<user-id>'
-      USER_KEY: '<deepseek-harness-user-key>'
+- insert:
+    - id: mcp-agent-memory
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: agent-memory
+        transport: stdio
+        command: npx
+        args: ['-y', 'tencent-agent-memory-mcp-bridge']
+        env:
+          MEMORY_ENDPOINT: https://memory.kuai-private.top
+          API_KEY: '<gate-api-key>'
+          SERVICE_ID: default
+          TEAM_ID: '<team-id>'
+          AGENT_ID: '<deepseek-harness-agent-id>'
+          USER_ID: '<user-id>'
+          USER_KEY: '<deepseek-harness-user-key>'
+        toolCallTimeoutMs: 30000
 ```
 
 模板见 [`examples/deepseek-harness/cordis.patch.yml`](../examples/deepseek-harness/cordis.patch.yml)。

@@ -11,21 +11,26 @@
 #
 # ⚠️ API_KEY / USER_KEY 是真实密钥：示例里用占位符，请替换成本机 mem-agent-keys-*.md 里的值；
 #    cordis.patch.yml 在用户目录（不进仓库），可以直接写真实值。
+#
+# ⚠️ 必须用 `- insert:` 追加新条目：cordis patch 层里，不带 insert 的 `- id: <x>` 是
+#    "覆盖已有行"语义——目标行不存在会被静默跳过（工具不出现）。insert 不带 id 才
+#    表示向顶层条目列表追加新插件行。
 
-- id: mcp-agent-memory
-  name: '@deepseek-ai/dsh-mcp-client'
-  config:
-    serverName: agent-memory
-    transport: stdio
-    command: npx
-    args: ['-y', 'tencent-agent-memory-mcp-bridge']
-    env:
-      MEMORY_ENDPOINT: https://memory.kuai-private.top
-      API_KEY: '<gate-api-key>'
-      SERVICE_ID: default
-      TEAM_ID: '<team-id>'
-      AGENT_ID: '<deepseek-harness-agent-id>'
-      USER_ID: '<user-id>'
-      USER_KEY: '<deepseek-harness-user-key>'
-      # TASK_ID: '<project-name>'   # 可选；缺省自动从 cwd 派生（项目目录名）
-    toolCallTimeoutMs: 30000
+- insert:
+    - id: mcp-agent-memory
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: agent-memory
+        transport: stdio
+        command: npx
+        args: ['-y', 'tencent-agent-memory-mcp-bridge']
+        env:
+          MEMORY_ENDPOINT: https://memory.kuai-private.top
+          API_KEY: '<gate-api-key>'
+          SERVICE_ID: default
+          TEAM_ID: '<team-id>'
+          AGENT_ID: '<deepseek-harness-agent-id>'
+          USER_ID: '<user-id>'
+          USER_KEY: '<deepseek-harness-user-key>'
+          # TASK_ID: '<project-name>'   # 可选；缺省自动从 cwd 派生（项目目录名）
+        toolCallTimeoutMs: 30000
