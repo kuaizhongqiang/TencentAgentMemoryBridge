@@ -106,6 +106,10 @@ node scripts/dsh-memory-autostore.mjs --baseline-only
 # 增量提交一次（配合 Windows 计划任务，每 N 分钟跑一次，只提交新完成的轮次）
 node scripts/dsh-memory-autostore.mjs --once
 
+# Windows 计划任务静默版（推荐）：wscript 隐藏窗口执行，无 cmd 闪烁，
+# 输出追加到 scripts/dsh-memory-autostore-run.log
+wscript.exe scripts\dsh-memory-autostore-hidden.vbs
+
 # 或常驻守护（10 秒轮询，延迟更低）
 node scripts/dsh-memory-autostore.mjs
 
