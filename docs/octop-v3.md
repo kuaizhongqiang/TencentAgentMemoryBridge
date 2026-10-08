@@ -136,20 +136,28 @@ node scripts/octop-memory-autostore.mjs --once
 node scripts/octop-memory-autostore.mjs
 
 # 其他
-node scripts/octop-memory-autostore.mjs --backfill   # 补提交历史全部轮次
-node scripts/octop-memory-autostore.mjs --dry-run    # 只扫描打印
+node scripts/octop-memory-autostore.mjs --backfill        # 补提交历史全部轮次
+node scripts/octop-memory-autostore.mjs --dry-run         # 只扫描打印
+node scripts/octop-memory-autostore.mjs --source sqlite --dry-run   # 换数据源试跑
 ```
 
 工作原理：
 
-- 读 Octop 主库 **`~/.octop/octop.db`（SQLite，只读连接）** 的 `thread_messages` + `threads`——DSH 版读会话日志，Octop 版读 SQLite，语义相同
-- 「用户一轮 → 助手**最终**回复」配对成一只 turn（中间过程 ai/tool 消息不算），POST 到 `/v3/conversation/add`
+- 默认读 **harness 会话日志** `~/.octop/workspaces/<ws>/<sysfiles>/sessions/YYYY-MM-DD.jsonl`
+  （harness_agent 自带的 `memory_jsonl` sink，一行一条 `{ts, role, content, thread_id, user, source, ...}`）。
+  **这是 agent runtime 自己写的，覆盖每一次真实对话**；相比之下 `octop.db.thread_messages` 是**客户端投影**，
+  新开对话的轮次可能没落库（实测：Dashboard 新开的一轮 17 分钟里 `thread_messages` 一行都没写）。
+- `--source sqlite` 可切到 `~/.octop/octop.db`（只读连接读 `thread_messages` + `threads`）；`auto` = 有日志用日志，否则回退 SQLite。
+- **配对**：「`user` → 该轮**最后一条有文本的 `assistant`**」= 一只 turn（中间过程 assistant 多为空串，跳过）。
+  一轮只在**下一条 `user` 出现**或**源文件静默超过 `OCTOP_AUTOSTORE_IDLE_FLUSH`**(默认 120s) 时才提交，
+  免得把"先说一句 → 调工具 → 再说结论"里的前言当成最终回复。
 - **身份**：env 优先，其次 `MEMORY_CONFIG`（默认 `~/.config/octop-memory/agent-memory.json`，**chmod 600**）
-- **session_id**：默认取 `threads.session_key`（如 `main:dashboard:1:dm`），同一通道的多个 thread 视作一段连续会话；`OCTOP_AUTOSTORE_SESSION_MODE=thread` 可改成"一对话一 session"
+- **session_id**：默认 `thread_id`（一对话一 session）；`OCTOP_AUTOSTORE_SESSION_MODE=source` 改为按通道归并
 - **task_id**：`TASK_ID`（默认 `octop`）
-- **去重**：按 `thread_id` 记游标（最后提交的 assistant seq），写 `~/.octop/.octop-memory-autostore-state.json`；提交失败**不推进游标**，下次自动重试
+- **去重**：按 `thread_id` 记游标（最后提交的 assistant 时间戳），写 `~/.octop/.octop-memory-autostore-state.json`；
+  游标带数据源前缀（`jsonl:` / `sqlite:`），换源不会把游标读歪；提交失败**不推进游标**，下次自动重试
 - **并发保护**：`state.json.lock` 进程锁，守护 + 计划任务同时跑也不会重复入库
-- 只依赖 Node ≥ 22.5 的 `node:sqlite`，**零 npm 依赖**
+- 默认源**零依赖**；`--source sqlite` 需要 Node ≥ 22.5 的 `node:sqlite`（Node 23+ 免 flag）
 
 ### systemd 用户级部署（推荐）
 
@@ -213,6 +221,8 @@ JSON
 | `401 Unauthorized` | `API_KEY` 不对/过期 | 核对门禁 key |
 | `Invalid task_id ... must NOT be an identity id` | `TASK_ID` 误填身份 id | 改成项目名（如 `octop`） |
 | 召回为空，但确实说过 | L1 抽取是异步的（每 5 轮 / 空闲 600s） | 用 `search_conversations` 读 L0；或等一轮 |
-| 守护脚本报 `需要 Node ≥ 22.5 的 node:sqlite` | Node 版本太低，或 Node 22 没带 `--experimental-sqlite` | 升级到 Node ≥ 23，或用 Node 24 |
+| 守护脚本报 `需要 Node ≥ 22.5 的 node:sqlite` | 用了 `--source sqlite` 但 Node 版本太低（Node 22 需 `--experimental-sqlite`） | 升级到 Node ≥ 23，或改用默认的 jsonl 源（无此依赖） |
+| 历史轮次没被采集 | 首次启动会**建基线**（跳过历史，不回溯） | 需要历史就跑一次 `--backfill`；注意会与其它源已入库的内容重复 |
+| 轮次迟迟不落库 | 该轮还没"闭合"——既没有下一条 user，源文件也还在写 | 正常；等下一轮或 `OCTOP_AUTOSTORE_IDLE_FLUSH`（默认 120s）静默后自动提交 |
 | 守护报 `已有实例在运行` | 前一个实例没退干净（锁文件残留） | 确认无进程后删 `~/.octop/.octop-memory-autostore-state.json.lock` |
 | 同一轮被提交两次 | 手动跑了 `--once` 又跑了守护，但游标被删 | 不要删 state 文件；锁文件保证并发安全 |
