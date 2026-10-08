@@ -117,14 +117,15 @@ DSH 没有 Stop hook，用独立守护脚本 [scripts/dsh-memory-autostore.mjs](
 
 ### Octop（守护脚本）
 
-Octop 也没有 Stop hook，用 [scripts/octop-memory-autostore.mjs](scripts/octop-memory-autostore.mjs) 实现同样语义（DSH 版读会话日志，Octop 版读 SQLite）：
+Octop 也没有 Stop hook，用 [scripts/octop-memory-autostore.mjs](scripts/octop-memory-autostore.mjs) 实现同样语义：
 
-- **原理**：以**只读**连接读 Octop 主库 `~/.octop/octop.db` 的 `thread_messages` + `threads`，把「用户一轮 → 助手最终回复」配对成一只 turn，POST 到 `/v3/conversation/add`
+- **原理**：读 harness 会话日志 `~/.octop/workspaces/<ws>/<sysfiles>/sessions/YYYY-MM-DD.jsonl`（agent runtime 自己写，覆盖每次真实对话），把「`user` → 该轮最后一条有文本的 `assistant`」配对成一只 turn，POST 到 `/v3/conversation/add`
+- **一轮闭合规则**：等到下一条 `user` 出现、或源文件静默超过 `OCTOP_AUTOSTORE_IDLE_FLUSH`（默认 120s）才提交，避免把"先说一句 → 调工具 → 再说结论"里的前言当成最终回复
+- **备选源**：`--source sqlite` → 读 `~/.octop/octop.db` 的 `thread_messages`（只读连接）。注意那是**客户端投影**，Dashboard 新开对话的轮次可能不落库
 - **身份**：env 优先，其次 `MEMORY_CONFIG`（默认 `~/.config/octop-memory/agent-memory.json`，chmod 600）
-- **session_id**：默认取 `threads.session_key`（同通道多 thread 视作一段连续会话）；`OCTOP_AUTOSTORE_SESSION_MODE=thread` 改为一对话一 session
+- **session_id**：默认 `thread_id`（一对话一 session）；`OCTOP_AUTOSTORE_SESSION_MODE=source` 改按通道归并
 - **task_id**：`TASK_ID`（默认 `octop`）；与 `agent_id` 严格分离
-- **去重**：按 `thread_id` 记游标（最后提交的 assistant seq）写 `~/.octop/.octop-memory-autostore-state.json`；失败不推进游标，下次重试；`state.json.lock` 进程锁防并发重复
-- **零依赖**：只用 Node ≥ 22.5 的 `node:sqlite`
+- **去重**：按 `thread_id` 记游标（最后提交的 assistant 时间戳）写 `~/.octop/.octop-memory-autostore-state.json`；游标带源前缀、失败不推进；`state.json.lock` 进程锁防并发重复
 - **用法**：与 DSH 版一致（`--baseline-only` / `--once` / `--backfill` / `--dry-run`），systemd 用户级单元模板见 [examples/octop/octop-memory-autostore.service](examples/octop/octop-memory-autostore.service)
 
 ## MCP 工具
