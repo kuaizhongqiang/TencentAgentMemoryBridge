@@ -29,6 +29,14 @@ export interface AtomicItem {
   updated_at?: string
 }
 
+export interface ConversationHit {
+  id?: string
+  role?: string
+  content: string
+  timestamp?: string
+  score?: number
+}
+
 export interface CoreFile {
   path?: string
   content: string
@@ -131,6 +139,19 @@ export class V3MemoryClient {
     })
     for (const k of ['limit', 'type']) if (body[k] === undefined) delete body[k]
     return this.post('/v3/atomic/search', body)
+  }
+
+  /** 搜 L0：检索原始对话（BM25 + 向量） */
+  searchConversations(
+    query: string,
+    opts: { limit?: number; sessionId?: string } = {},
+  ): Promise<{ messages?: ConversationHit[] }> {
+    // 与 /v3/conversation/search 的语义保持一致：**不传 session_id 即跨 session 检索**，
+    // 传了才把结果限制在该会话内。L1 抽取是异步的，L0 搜索是"刚说过的话"的兜底通道。
+    const body: Record<string, unknown> = { query, limit: opts.limit }
+    if (body.limit === undefined) delete body.limit
+    if (opts.sessionId) body.session_id = opts.sessionId
+    return this.post('/v3/conversation/search', this.baseBody(body))
   }
 
   /** 读 L3：agent 长期画像（persona） */

@@ -67,6 +67,41 @@ describe('V3MemoryClient', () => {
     expect(body).not.toHaveProperty('type')
   })
 
+  it('searchConversations omits session_id by default (cross-session search)', async () => {
+    const fetchMock = mockFetchOnce(200, { code: 0, message: 'ok', data: { messages: [{ id: 'm1', role: 'user', content: 'hi' }] } })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const client = new V3MemoryClient(CONFIG)
+    const res = await client.searchConversations('hi', {})
+
+    expect(res.messages).toHaveLength(1)
+    const [url, init] = fetchMock.mock.calls[0]!
+    expect(url).toBe('https://memory.kuai-private.top/v3/conversation/search')
+    const body = JSON.parse(init.body as string)
+    expect(body).toMatchObject({
+      query: 'hi',
+      team_id: 'team-test',
+      agent_id: 'agt-test',
+      user_id: 'usr-test',
+      task_id: 'TencentAgentMemoryBridge',
+    })
+    // 不传 session_id → 跨 session 检索（L0 搜索的默认语义）
+    expect(body).not.toHaveProperty('session_id')
+    expect(body).not.toHaveProperty('limit')
+  })
+
+  it('searchConversations sends session_id + limit when provided', async () => {
+    const fetchMock = mockFetchOnce(200, { code: 0, message: 'ok', data: { messages: [] } })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const client = new V3MemoryClient(CONFIG)
+    await client.searchConversations('q', { limit: 3, sessionId: 'sess-1' })
+
+    const [, init] = fetchMock.mock.calls[0]!
+    const body = JSON.parse(init.body as string)
+    expect(body).toMatchObject({ query: 'q', limit: 3, session_id: 'sess-1' })
+  })
+
   it('throws when envelope code is non-zero', async () => {
     vi.stubGlobal('fetch', mockFetchOnce(200, { code: 1001, message: 'invalid user_key' }))
     const client = new V3MemoryClient(CONFIG)

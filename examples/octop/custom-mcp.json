@@ -1,0 +1,24 @@
+{
+  "//": "Octop 自定义 MCP 连接器：设置 → 连接器 → 自定义 MCP，或 PUT /api/connectors/custom-mcp",
+  "//payload": "{\"servers\": {...}} —— 下面 servers 的值就是 PUT 的 body",
+  "servers": {
+    "agent-memory": {
+      "transport": "stdio",
+      "command": "node",
+      "args": ["/home/kuai/.npm-global/lib/node_modules/tencent-agent-memory-mcp-bridge/dist/index.js"],
+      "env": {
+        "MEMORY_ENDPOINT": "http://127.0.0.1:8422",
+        "API_KEY": "<gate-api-key>",
+        "SERVICE_ID": "default",
+        "TEAM_ID": "<team-id>",
+        "AGENT_ID": "<octop-agent-id>",
+        "USER_ID": "<user-id>",
+        "USER_KEY": "<octop-user-key>",
+        "TASK_ID": "octop"
+      },
+      "display_name": "TencentDB Agent Memory (腾讯记忆)",
+      "enabled": true,
+      "default_open": true
+    }
+  }
+}

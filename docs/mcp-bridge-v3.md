@@ -1,6 +1,6 @@
 # mcp-bridge v3 使用指南
 
-> **版本**: 0.4.0 · 面向团队版（MemoryCore `/v3/*`）
+> **版本**: 0.5.0 · 面向团队版（MemoryCore `/v3/*`）
 > **状态**: 全量重写完成，直连 MemoryCore Gateway，不再依赖 bridge-server
 
 ## 概述
@@ -12,6 +12,7 @@ mcp-bridge v3 是 MCP（Model Context Protocol）服务器，把 AI Agent 的记
 - ❌ 移除 `end_session` 工具（v3 无对应端点，session 只是客户端 key）
 - ✅ 新增多层级召回（`recall_memory` 合并 L1 事实 + L3 persona + L2 场景索引）
 - ✅ 0.4.0：task_id 防混用校验（拒绝身份前缀）+ 工具结果 `_context` 回显隔离域
+- ✅ 0.5.0：新增 `search_conversations`（L0 原始对话检索）——L1 抽取是异步的，刚说过的内容走这条通道
 
 ## 配置
 
@@ -39,7 +40,7 @@ mcp-bridge v3 是 MCP（Model Context Protocol）服务器，把 AI Agent 的记
   "mcpServers": {
     "agent-memory": {
       "command": "npx",
-      "args": ["@tencent-agent-memory/mcp-bridge"],
+      "args": ["-y", "tencent-agent-memory-mcp-bridge"],
       "env": {
         "MEMORY_ENDPOINT": "https://memory.kuai-private.top",
         "API_KEY": "<gate-api-key>",
@@ -77,6 +78,7 @@ mcp-bridge 支持 **task_id** 做项目级区分：
 | `recall_memory(query, limit?, include_persona?, include_scenes?)` | `/v3/atomic/search` + `/v3/core/read` + `/v3/scenario/ls` | 多层级召回，返回 `{facts, persona?, scenes?, _context}` |
 | `store_memory(user_content, assistant_content, session_key?)` | `/v3/conversation/add` | 写 L0，必填 session；返回 `{accepted_ids, _context}` |
 | `search_memories(query, limit?, type?)` | `/v3/atomic/search` | L1 语义搜索，返回 `{items, _context}` |
+| `search_conversations(query, limit?, session_key?)` | `/v3/conversation/search` | L0 原始对话检索（≥0.5.0）。L1 抽取是异步的，刚说过的话尚未进事实索引时用这条；默认跨 session，传 `session_key` 才限定单会话 |
 
 > 工具不接受 `agent_id` / `task_id` 参数——身份与项目标签由 MCP env 注入，模型无需（也不应）猜测或混用。
 

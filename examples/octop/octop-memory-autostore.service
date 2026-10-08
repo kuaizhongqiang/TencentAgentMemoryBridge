@@ -1,0 +1,26 @@
+# Octop → TencentDB Agent Memory 自动入库守护（systemd 用户级）
+#
+# 安装：
+#   cp examples/octop/octop-memory-autostore.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now octop-memory-autostore.service
+#   journalctl --user -u octop-memory-autostore -f
+#
+# 依赖：Node ≥ 22.5（node:sqlite）；凭据文件 ~/.config/octop-memory/agent-memory.json（chmod 600）
+
+[Unit]
+Description=Octop → TencentDB Agent Memory autostore (L0 capture)
+After=memory-gateway-full.service
+Wants=memory-gateway-full.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/TencentAgentMemoryBridge
+Environment=MEMORY_CONFIG=%h/.config/octop-memory/agent-memory.json
+Environment=OCTOP_HOME=%h/.octop
+ExecStart=/usr/bin/node %h/projects/TencentAgentMemoryBridge/scripts/octop-memory-autostore.mjs
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
