@@ -65,10 +65,31 @@ const TOOLS: Tool[] = [
       required: ['query'],
     },
   },
+  {
+    name: 'search_conversations',
+    description:
+      'Search raw L0 conversation turns (the original dialogue text that was captured) across sessions in the CURRENT ' +
+      'isolation domain. L1 extraction is asynchronous, so freshly captured turns may not be in the fact index yet — ' +
+      'this tool reads the captured turns directly and is the right fallback for "what exactly did we say about X". ' +
+      'Identity and task_id come from the MCP server environment — do not pass agent_id/team_id/user_id/task_id. ' +
+      'Results include a _context block echoing the active isolation domain.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Search query' },
+        limit: { type: 'number', description: 'Max messages to return (default 5)' },
+        session_key: {
+          type: 'string',
+          description: 'Optional: restrict the search to a single session id. Omit to search across all sessions.',
+        },
+      },
+      required: ['query'],
+    },
+  },
 ]
 
 const server = new Server(
-  { name: 'tencent-agent-memory-mcp-bridge', version: '0.4.0' },
+  { name: 'tencent-agent-memory-mcp-bridge', version: '0.5.0' },
   { capabilities: { tools: {} } },
 )
 
@@ -137,6 +158,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return {
           content: [
             { type: 'text', text: JSON.stringify({ items: data.items ?? [], _context: contextEcho() }) },
+          ],
+        }
+      }
+
+      case 'search_conversations': {
+        const data = await client.searchConversations(args?.query as string, {
+          limit: args?.limit as number | undefined,
+          sessionId: (args?.session_key as string | undefined) || undefined,
+        })
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({ messages: data.messages ?? [], _context: contextEcho() }),
+            },
           ],
         }
       }

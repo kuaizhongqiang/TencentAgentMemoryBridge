@@ -17,7 +17,7 @@
 │ MCP-only 客户端 │──▶┌───────────────────────┐        │
 │ (Claude Code, │   │  mcp-bridge (v3 重写)   │────────▶ MemoryCore /v3/*
 │  CodeBuddy,   │   │  配置 TEAM/AGENT/USER 三元组 │
-│  DSH)         │   └───────────────────────┘        │
+│  DSH, Octop)  │   └───────────────────────┘        │
 └───────────────┘   ┌───────────────────────┐        │
 ┌───────────────┐   │  openclaw-plugin(官方)  │────────▶ MemoryCore /v3/*
 │ OpenClaw      │──▶│  静态配置 teamId/agentId│
@@ -27,7 +27,7 @@
 | 组件 | 状态 | 接入方 | 说明 |
 | ---- | ---- | ---- | ---- |
 | **MemoryProxy** | ✅ 团队版核心 | Claude Code / WorkBuddy | 透明 LLM 代理：URL `/{agent}/{spaceId}/v1/*` + header 预选；每轮对话自动回流 L0，L2/L3 自动注入 system prompt，无需显式工具调用 |
-| **mcp-bridge** | ✅ v3 重写（0.4.0） | MCP-only 客户端（Claude Code / CodeBuddy / **DeepSeek Harness**） | 直连 MemoryCore `/v3/*`，配置隔离三元组 `TEAM_ID/AGENT_ID/USER_ID` + 可选 `TASK_ID`；工具结果回显 `_context` 隔离域 |
+| **mcp-bridge** | ✅ v3 重写（0.5.0） | MCP-only 客户端（Claude Code / CodeBuddy / **DeepSeek Harness** / **Octop**） | 直连 MemoryCore `/v3/*`，配置隔离三元组 `TEAM_ID/AGENT_ID/USER_ID` + 可选 `TASK_ID`；工具结果回显 `_context` 隔离域 |
 | **openclaw-plugin** | ✅ 官方插件 | OpenClaw | 上游官方实现，静态配置 `teamId / agentId / userId` |
 | **bridge-server** | ❌ **已退役** | — | 旧 sender 鉴权/转发被团队版自带鉴权取代 |
 
@@ -36,9 +36,9 @@
 - **v3 隔离三元组**：一切数据面读写都带 `team_id + agent_id + user_id`（可选 `task_id` 做项目级区分），取代旧 sender 白名单
 - **task_id 与身份严格分离**：`agent_id`（`agt-*`）是平台身份、跨项目不变；`task_id` 是项目级标签（目录名或显式 `TASK_ID`），**拒绝 `agt-`/`team-`/`usr-`/`sk-` 前缀**（mcp-bridge ≥ 0.4.0 启动即校验），杜绝身份 id 被当 task_id 用
 - **单团队作用域**：`/v3/atomic/search`、`/v3/core/read`、`/v3/scenario/ls` 都在当前 team 内检索
-- **召回与写入分离**：L1 按需经工具查询；L0 由 MemoryProxy 透明回流或 mcp-bridge 显式/Stop hook 写入
+- **召回与写入分离**：L1 按需经工具查询；L0 由 MemoryProxy 透明回流或 mcp-bridge 显式/守护脚本写入
 
-## 三种接入方式
+## 接入方式
 
 ### 1. MemoryProxy（透明，推荐）
 
@@ -84,6 +84,10 @@ MCP 服务器，把记忆工具调用**直连** MemoryCore Gateway（团队版 `
 
 DSH 通过原生 MCP 客户端插件（`@deepseek-ai/dsh-mcp-client`）连接 mcp-bridge，模型看到 `mcp__agent-memory__*` 工具。配置模板见 [examples/deepseek-harness/cordis.patch.yml](examples/deepseek-harness/cordis.patch.yml)，完整指南见 [docs/deepseek-harness-v3.md](docs/deepseek-harness-v3.md)。
 
+### 5. Octop（自定义 MCP 连接器）
+
+Octop 用**原生自定义 MCP 连接器**（stdio）连 mcp-bridge，模型看到 `agent-memory_*` 工具；`default_open: true` 让 Dashboard / IM / Cron 每轮自动带工具。入库由 `scripts/octop-memory-autostore.mjs` 守护兜底（读 `~/.octop/octop.db` 的 `thread_messages`）。配置模板见 [examples/octop/](examples/octop/)，完整指南见 [docs/octop-v3.md](docs/octop-v3.md)。
+
 ## 自动入库（默认提交、按需取回）
 
 ### Claude Code / CodeBuddy（Stop hook）
@@ -111,6 +115,18 @@ DSH 没有 Stop hook，用独立守护脚本 [scripts/dsh-memory-autostore.mjs](
 - **去重**：按 `session_id + turn` 写 `~/.dsh/.dsh-memory-autostore-state.json`；启动建基线不回溯历史，只提交之后新增轮次
 - **用法**：部署时先 `node scripts/dsh-memory-autostore.mjs --baseline-only`（把现有轮次记为基线，不回溯提交历史），之后 `node scripts/dsh-memory-autostore.mjs --once`（增量提交，配合计划任务）或常驻 `node scripts/dsh-memory-autostore.mjs`（10s 轮询）；`--backfill` 补提交历史；`--dry-run` 只扫描
 
+### Octop（守护脚本）
+
+Octop 也没有 Stop hook，用 [scripts/octop-memory-autostore.mjs](scripts/octop-memory-autostore.mjs) 实现同样语义（DSH 版读会话日志，Octop 版读 SQLite）：
+
+- **原理**：以**只读**连接读 Octop 主库 `~/.octop/octop.db` 的 `thread_messages` + `threads`，把「用户一轮 → 助手最终回复」配对成一只 turn，POST 到 `/v3/conversation/add`
+- **身份**：env 优先，其次 `MEMORY_CONFIG`（默认 `~/.config/octop-memory/agent-memory.json`，chmod 600）
+- **session_id**：默认取 `threads.session_key`（同通道多 thread 视作一段连续会话）；`OCTOP_AUTOSTORE_SESSION_MODE=thread` 改为一对话一 session
+- **task_id**：`TASK_ID`（默认 `octop`）；与 `agent_id` 严格分离
+- **去重**：按 `thread_id` 记游标（最后提交的 assistant seq）写 `~/.octop/.octop-memory-autostore-state.json`；失败不推进游标，下次重试；`state.json.lock` 进程锁防并发重复
+- **零依赖**：只用 Node ≥ 22.5 的 `node:sqlite`
+- **用法**：与 DSH 版一致（`--baseline-only` / `--once` / `--backfill` / `--dry-run`），systemd 用户级单元模板见 [examples/octop/octop-memory-autostore.service](examples/octop/octop-memory-autostore.service)
+
 ## MCP 工具
 
 | 工具 | v3 端点 | 说明 |
@@ -118,6 +134,7 @@ DSH 没有 Stop hook，用独立守护脚本 [scripts/dsh-memory-autostore.mjs](
 | `recall_memory` | `/v3/atomic/search` + `/v3/core/read` + `/v3/scenario/ls` | 多层级召回，返回 `{facts, persona?, scenes?, _context}` |
 | `store_memory` | `/v3/conversation/add` | 写 L0，必填 session（Stop hook 已自动兜底，一般无需显式调） |
 | `search_memories` | `/v3/atomic/search` | L1 语义搜索，返回 `{items, _context}` |
+| `search_conversations` | `/v3/conversation/search` | L0 原始对话检索（≥0.5.0）：L1 抽取是异步的，刚说过的内容走这条；默认跨 session |
 
 > `end_session` 已移除：v3 中 session 只是客户端 key，无独立关闭端点。
 > `_context`（≥0.4.0）：每个工具结果回显当前隔离域 `{team_id, agent_id, user_id, task_id}`，模型/用户可据此确认 agent 与 task 未混用。
@@ -131,15 +148,19 @@ tencent-agent-memory-bridge/
 │   └── bridge-server/        # 已退役（旧 sender 代理层，仅保留历史参考）
 ├── scripts/
 │   ├── stop-memory-store.mjs # Stop hook：响应结束后自动写 L0（Claude Code）
-│   └── stop-memory-store-codebuddy.mjs # CodeBuddy Stop hook
+│   ├── stop-memory-store-codebuddy.mjs # CodeBuddy Stop hook
+│   ├── dsh-memory-autostore.mjs   # DSH 守护：读会话日志，按轮次自动写 L0
+│   └── octop-memory-autostore.mjs # Octop 守护：读 octop.db，按轮次自动写 L0
 ├── examples/
 │   ├── codebuddy/            # CodeBuddy MCP 安装/更新指南
 │   ├── claude-code/          # Claude Code 配置指南
-│   └── deepseek-harness/     # DeepSeek Harness cordis.patch.yml 模板
+│   ├── deepseek-harness/     # DeepSeek Harness cordis.patch.yml 模板
+│   └── octop/                # Octop 自定义 MCP 连接器 + systemd 守护模板
 ├── docs/
 │   ├── team-edition-role-model.md   # 团队版三角色模型（权威）
 │   ├── mcp-bridge-v3.md             # mcp-bridge v3 使用指南
 │   ├── deepseek-harness-v3.md       # DeepSeek Harness 接入指南
+│   ├── octop-v3.md                  # Octop（agent harness）接入指南
 │   ├── openclaw-plugin-v3.md        # OpenClaw 官方插件接入
 │   └── design-overview.md           # 旧架构设计（已过时，仅参考）
 ├── CLAUDE.md                 # 项目指令
