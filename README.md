@@ -27,9 +27,9 @@
 | 组件 | 状态 | 接入方 | 说明 |
 | ---- | ---- | ---- | ---- |
 | **MemoryProxy** | ✅ 团队版核心 | Claude Code / WorkBuddy | 透明 LLM 代理：URL `/{agent}/{spaceId}/v1/*` + header 预选；每轮对话自动回流 L0，L2/L3 自动注入 system prompt，无需显式工具调用 |
-| **mcp-bridge** | ✅ v3 重写（0.5.0） | MCP-only 客户端（Claude Code / CodeBuddy / **DeepSeek Harness** / **Octop**） | 直连 MemoryCore `/v3/*`，配置隔离三元组 `TEAM_ID/AGENT_ID/USER_ID` + 可选 `TASK_ID`；工具结果回显 `_context` 隔离域 |
+| **mcp-bridge** | ✅ v3 重写（0.6.0） | MCP-only 客户端（Claude Code / CodeBuddy / **DeepSeek Harness** / **Octop**） | 直连 MemoryCore `/v3/*`，配置隔离三元组 `TEAM_ID/AGENT_ID/USER_ID` + 可选 `TASK_ID`；工具结果回显 `_context` 隔离域；0.6.0 起支持 `MEMORY_ENDPOINTS` 有序端点 + 读路径回落 |
 | **openclaw-plugin** | ✅ 官方插件 | OpenClaw | 上游官方实现，静态配置 `teamId / agentId / userId` |
-| **bridge-server** | ❌ **已退役** | — | 旧 sender 鉴权/转发被团队版自带鉴权取代 |
+| **bridge-server** | ⚠️ 可选（Tailscale 入口，0.3.0+） | 私有 mesh（Tailscale）客户端 | 旧 sender 代理已退役；新增多地址/尾网监听（`LISTEN_MODE=tailscale`）并把 `/v3/*` 透明转发到 MemoryCore，用作绕开 Cloudflare 的私有入口。见 [docs/bridge-server-tailscale.md](docs/bridge-server-tailscale.md) |
 
 ### 核心原则
 
@@ -128,6 +128,14 @@ Octop 也没有 Stop hook，用 [scripts/octop-memory-autostore.mjs](scripts/oct
 - **去重**：按 `thread_id` 记游标（最后提交的 assistant 时间戳）写 `~/.octop/.octop-memory-autostore-state.json`；游标带源前缀、失败不推进；`state.json.lock` 进程锁防并发重复
 - **用法**：与 DSH 版一致（`--baseline-only` / `--once` / `--backfill` / `--dry-run`），systemd 用户级单元模板见 [examples/octop/octop-memory-autostore.service](examples/octop/octop-memory-autostore.service)
 
+### Tailscale 专用入口（可选，bridge-server ≥0.3.0）
+
+公网 Cloudflare 链路抖动时（实测 memory 域仅 3/8 成功），已装 Tailscale 的客户端可改走私有 mesh，不再经公网绕一跳：
+
+- **服务端**：`bridge-server` 用 `LISTEN_MODE=tailscale` 只绑本机尾网 IP（自动解析 `tailscale ip -4`，不写死），并把 `/v3/*` 透明转发到本机 MemoryCore（`V3_UPSTREAM=http://127.0.0.1:8422`）；公网接口不监听
+- **客户端**：`MEMORY_ENDPOINTS=http://100.x.y.z:3000,https://memory.kuai-private.top`，读请求失败自动回落（mcp-bridge ≥0.6.0）
+- **配置 / 验收 / 回滚**：见 [docs/bridge-server-tailscale.md](docs/bridge-server-tailscale.md)
+
 ## MCP 工具
 
 | 工具 | v3 端点 | 说明 |
@@ -138,6 +146,7 @@ Octop 也没有 Stop hook，用 [scripts/octop-memory-autostore.mjs](scripts/oct
 | `search_conversations` | `/v3/conversation/search` | L0 原始对话检索（≥0.5.0）：L1 抽取是异步的，刚说过的内容走这条；默认跨 session |
 
 > `end_session` 已移除：v3 中 session 只是客户端 key，无独立关闭端点。
+> 端点回落（mcp-bridge ≥0.6.0）：`MEMORY_ENDPOINTS` 可配多个有序地址（如尾网优先），读路径（`recall_memory`/`search_memories`/`search_conversations`）失败自动下一个；写路径 `store_memory` 只走第一个端点（避免重复写入）。详见 [docs/mcp-bridge-v3.md](docs/mcp-bridge-v3.md)。
 > `_context`（≥0.4.0）：每个工具结果回显当前隔离域 `{team_id, agent_id, user_id, task_id}`，模型/用户可据此确认 agent 与 task 未混用。
 
 ## 项目结构
@@ -146,7 +155,7 @@ Octop 也没有 Stop hook，用 [scripts/octop-memory-autostore.mjs](scripts/oct
 tencent-agent-memory-bridge/
 ├── packages/
 │   ├── mcp-bridge/           # MCP Server → MemoryCore /v3/* 直连（v3 重写）
-│   └── bridge-server/        # 已退役（旧 sender 代理层，仅保留历史参考）
+│   └── bridge-server/        # 可选：Tailscale 专用入口 + /v3 透明转发（旧 sender 代理已退役）
 ├── scripts/
 │   ├── stop-memory-store.mjs # Stop hook：响应结束后自动写 L0（Claude Code）
 │   ├── stop-memory-store-codebuddy.mjs # CodeBuddy Stop hook

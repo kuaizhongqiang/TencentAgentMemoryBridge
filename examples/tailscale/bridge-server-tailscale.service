@@ -1,0 +1,38 @@
+# bridge-server — Tailscale-only ingress for TencentDB Agent Memory
+#
+# 用途：只绑本机 Tailscale IPv4，并把 mcp-bridge 的 /v3/* 透明转发到本机
+# MemoryCore Gateway（默认 127.0.0.1:8422），让 tailnet 内的客户端绕开公网
+# Cloudflare。默认监听模式由 EnvironmentFile 里的 LISTEN_MODE=tailscale 决定。
+#
+# 安装（用户级 systemd）：
+#   mkdir -p ~/.config/tencent-memory
+#   cp examples/tailscale/bridge-server-tailscale.env.example \
+#      ~/.config/tencent-memory/bridge-server-tailscale.env
+#   # 按需修改 env（PORT/V3_UPSTREAM/AGENTS...）
+#   cp examples/tailscale/bridge-server-tailscale.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now bridge-server-tailscale.service
+#   systemctl --user status bridge-server-tailscale.service
+#   ss -ltnp | grep :3000     # 只应看到 <tailscale-ip>:3000
+#
+# 依赖：bridge-server 已构建（cd packages/bridge-server && pnpm build），
+#       且本机已安装并登录 Tailscale（tailscale ip -4 可用）。
+# 说明：%h 在用户级 unit 中展开为当前用户 home；/usr/bin/node 为系统 Node，
+#       避免绑定 nvm 版本目录。如你的 Node 在别处，请改 ExecStart。
+
+[Unit]
+Description=TencentDB Agent Memory bridge-server — Tailscale-only ingress (/v3 proxy)
+Documentation=file://%h/projects/TencentAgentMemoryBridge/docs/bridge-server-tailscale.md
+After=network-online.target memory-gateway-full.service
+Wants=memory-gateway-full.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/TencentAgentMemoryBridge/packages/bridge-server
+EnvironmentFile=%h/.config/tencent-memory/bridge-server-tailscale.env
+ExecStart=/usr/bin/node %h/projects/TencentAgentMemoryBridge/packages/bridge-server/dist/index.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

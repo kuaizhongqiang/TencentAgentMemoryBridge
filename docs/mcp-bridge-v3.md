@@ -1,6 +1,6 @@
 # mcp-bridge v3 使用指南
 
-> **版本**: 0.5.2 · 面向团队版（MemoryCore `/v3/*`）
+> **版本**: 0.6.0 · 面向团队版（MemoryCore `/v3/*`）
 > **状态**: 全量重写完成，直连 MemoryCore Gateway，不再依赖 bridge-server
 
 ## 概述
@@ -14,6 +14,7 @@ mcp-bridge v3 是 MCP（Model Context Protocol）服务器，把 AI Agent 的记
 - ✅ 0.4.0：task_id 防混用校验（拒绝身份前缀）+ 工具结果 `_context` 回显隔离域
 - ✅ 0.5.0：新增 `search_conversations`（L0 原始对话检索）——L1 抽取是异步的，刚说过的内容走这条通道
 - ✅ 0.5.2：检索参数按网关契约钳制（`query ≤ 2048` 码元、`limit 1..100`），长 query 不再触发 HTTP 400；发生钳制时结果附 `_query` 元信息
+- ✅ 0.6.0：`MEMORY_ENDPOINTS` 有序端点列表 + 读路径首次失败回落（网络错误/超时/5xx/非 JSON 自动换下一个端点），写路径只走第一个端点不回落
 
 ## 配置
 
@@ -21,7 +22,8 @@ mcp-bridge v3 是 MCP（Model Context Protocol）服务器，把 AI Agent 的记
 
 | 变量 | 必填 | 说明 |
 | --- | --- | --- |
-| `MEMORY_ENDPOINT` | ✅ | MemoryCore Gateway 地址（如 `https://memory.kuai-private.top`） |
+| `MEMORY_ENDPOINT` | 二选一 | MemoryCore Gateway 地址（单项，如 `https://memory.kuai-private.top`）；`MEMORY_ENDPOINTS` 设置时被忽略 |
+| `MEMORY_ENDPOINTS` | 二选一 | **有序**端点列表（逗号分隔，≥0.6.0），读请求失败按顺序回落；优先于 `MEMORY_ENDPOINT` |
 | `API_KEY` | ✅ | 网关门禁 key（`Authorization: Bearer`，多 agent 共用） |
 | `SERVICE_ID` | ✅ | memory 实例 id / spaceId（`x-tdai-service-id`） |
 | `TEAM_ID` | ✅ | v3 隔离：团队 id |
@@ -71,6 +73,107 @@ mcp-bridge 支持 **task_id** 做项目级区分：
 - **L3 persona / L2 场景仍跨项目共享**（按 team+agent 维度）
 
 > 工具结果（≥0.4.0）带 `_context` 回显 `{team_id, agent_id, user_id, task_id}`，调用方可确认当前隔离域，避免 agent/task 混用。
+
+### 端点顺序与回落（≥0.6.0）
+
+`MEMORY_ENDPOINTS` 是**有序**端点列表（逗号分隔），用于解决公网 Cloudflare 抖动时 `recall_memory` 直接 `fetch failed` 的问题：读请求按顺序尝试，前一个不可用就自动落到下一个。
+
+**解析规则**
+
+- `trim` + 丢弃空项（`a,,b` / 行尾逗号都合法）+ 去重保序；每一项必须是 `http(s)` URL，**任一项非法启动即报错**（不静默丢项，否则"回落"会悄悄少一跳）。
+- 设置后**优先于** `MEMORY_ENDPOINT`（后者保留为单项旧配置兼容）；`endpoint` 兼容字段 = `endpoints[0]`。
+- 两者都未设置时，沿用原报错 `Missing required environment variable(s): MEMORY_ENDPOINT`。
+
+**回落语义（仅读路径）**
+
+适用工具：`recall_memory`、`search_memories`、`search_conversations`，以及它们背后的 `/v3/core/read`、`/v3/scenario/ls`。
+
+- **可回落**：`fetch` 抛错（DNS / `ECONNREFUSED` / `fetch failed`）、AbortError 超时、HTTP 5xx、非 JSON 响应（典型如 Cloudflare 502 HTML）——换下一个端点可能成功。
+- **不可回落（直接报错）**：HTTP 4xx（API_KEY / 参数错）、envelope `code!==0`（业务错误）——换端点只会掩盖问题。
+- 每个端点各自使用 `TIMEOUT_MS` 预算，n 个端点最坏耗时 `n × TIMEOUT_MS`。
+- 全部端点失败时，错误信息会列出尝试过的端点及各自原因，便于排障。
+- 发生回落时向 **stderr** 打一行提示（stdout 属于 MCP stdio 协议，不能写日志）。
+
+**写路径不回落**：`store_memory` 背后的 `/v3/conversation/add` **只发往 `endpoints[0]`**。请求可能已到达网关、只是响应丢失，换端点重发会造成重复写入；因此写路径不享受回落，应把最可靠/最近的端点放在第一位。
+
+**推荐顺序（二选一）**
+
+```bash
+# Tailscale 优先：内网更稳，公网兜底（issue #43 的典型场景）
+MEMORY_ENDPOINTS=http://100.x.y.z:3000,https://memory.kuai-private.top
+
+# 公网优先：tailscale serve / 内网只做备用
+MEMORY_ENDPOINTS=https://memory.kuai-private.top,http://100.x.y.z:3000
+```
+
+> `100.x.y.z` 是 Tailscale IPv4 占位符（用 `tailscale ip -4` 查本机地址）；端口与路径按部署实际填写。
+
+**各客户端改法**
+
+DSH（合并到 profile 的 `cordis.patch.yml`，保存后热生效）：
+
+```yaml
+- insert:
+    - id: mcp-agent-memory
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: agent-memory
+        transport: stdio
+        command: npx
+        args: ['-y', 'tencent-agent-memory-mcp-bridge']
+        env:
+          MEMORY_ENDPOINTS: 'http://100.x.y.z:3000,https://memory.kuai-private.top'
+          API_KEY: '<gate-api-key>'
+          SERVICE_ID: default
+          TEAM_ID: '<team-id>'
+          AGENT_ID: '<deepseek-harness-agent-id>'
+          USER_ID: '<user-id>'
+```
+
+Claude Code（`~/.claude/settings.json` 或项目 `.mcp.json`）：
+
+```jsonc
+{
+  "mcpServers": {
+    "agent-memory": {
+      "command": "npx",
+      "args": ["-y", "tencent-agent-memory-mcp-bridge"],
+      "env": {
+        "MEMORY_ENDPOINTS": "http://100.x.y.z:3000,https://memory.kuai-private.top",
+        "API_KEY": "<gate-api-key>",
+        "SERVICE_ID": "default",
+        "TEAM_ID": "<team-id>",
+        "AGENT_ID": "<claude-code-agent-id>",
+        "USER_ID": "<user-id>"
+      }
+    }
+  }
+}
+```
+
+CodeBuddy（`.codebuddy/mcp.json` 或 MCP 设置页的 env；结构与上面一致）：
+
+```jsonc
+{
+  "mcpServers": {
+    "agent-memory": {
+      "command": "npx",
+      "args": ["-y", "tencent-agent-memory-mcp-bridge"],
+      "env": {
+        "MEMORY_ENDPOINTS": "http://100.x.y.z:3000,https://memory.kuai-private.top",
+        "API_KEY": "<gate-api-key>",
+        "SERVICE_ID": "default",
+        "TEAM_ID": "<team-id>",
+        "AGENT_ID": "<codebuddy-agent-id>",
+        "USER_ID": "<user-id>",
+        "USER_KEY": "<codebuddy-user-key>"
+      }
+    }
+  }
+}
+```
+
+> 只配一个端点时继续用 `MEMORY_ENDPOINT` 即可；配 `MEMORY_ENDPOINTS` 后则不再读取 `MEMORY_ENDPOINT`。
 
 ## 工具
 

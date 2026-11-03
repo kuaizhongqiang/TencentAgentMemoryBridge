@@ -1,6 +1,13 @@
 export interface McpConfig {
-  /** MemoryCore Gateway 地址，如 https://memory.kuai-private.top */
+  /** MemoryCore Gateway 主地址（= endpoints[0]，兼容老配置的单一 endpoint 字段） */
   endpoint: string
+  /**
+   * 有序端点列表：读请求按顺序尝试，前一个不可用（网络错误/超时/5xx/非 JSON）时
+   * 自动回落到下一个；写请求（conversation/add）只用 endpoints[0]。
+   *
+   * 来源：`MEMORY_ENDPOINTS`（逗号分隔，优先）或 `MEMORY_ENDPOINT`（单项，兼容旧配置）。
+   */
+  endpoints: string[]
   /** 网关门禁 key（Authorization: Bearer），多 agent 共用 */
   apiKey: string
   /** memory 实例 id（x-tdai-service-id header），即 spaceId */
@@ -24,6 +31,46 @@ export interface McpConfig {
 function generateSessionKey(agentId: string): string {
   const today = new Date().toISOString().slice(0, 10)
   return `${agentId}-${today}`
+}
+
+/** 端点必须是 http(s) URL：既防 `ftp://`，也防把逗号漏写/误写成路径。 */
+function assertHttpUrl(value: string, source: string): string {
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    throw new Error(`Invalid ${source} '${value}': must be an http(s) URL, e.g. http://127.0.0.1:3000`)
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`Invalid ${source} '${value}': protocol must be http or https (got ${parsed.protocol.replace(':', '')})`)
+  }
+  return value
+}
+
+/**
+ * 解析有序端点列表，去重但保持顺序。
+ *
+ * - `MEMORY_ENDPOINTS`：逗号分隔，trim、丢弃空项（`a,,b` / 行尾逗号都合法）；
+ *   任一项不是 http(s) URL 直接报错（静默丢弃会让"回落"悄悄少一跳，更难排障）。
+ * - 未设置（或只有空白/逗号）→ 回落到 `MEMORY_ENDPOINT`（老配置兼容）。
+ * - 两者都无 → 返回空数组，由调用方沿用原有的必填报错信息。
+ */
+export function parseMemoryEndpoints(endpointsRaw?: string, endpointRaw?: string): string[] {
+  const list: string[] = []
+  const rawList = (endpointsRaw ?? '').trim()
+  if (rawList) {
+    for (const part of rawList.split(',')) {
+      const entry = part.trim()
+      if (!entry) continue
+      const valid = assertHttpUrl(entry, 'MEMORY_ENDPOINTS entry')
+      if (!list.includes(valid)) list.push(valid)
+    }
+  }
+  if (list.length > 0) return list
+  const single = (endpointRaw ?? '').trim()
+  if (!single) return []
+  // 老配置 MEMORY_ENDPOINT 保持原样（不做 URL 校验，保证 0.5.x 配置原封不动可用）。
+  return [single]
 }
 
 /**
@@ -63,7 +110,10 @@ function assertValidTaskId(taskId: string, source: 'TASK_ID' | 'cwd'): string {
 }
 
 export function loadConfig(): McpConfig {
-  const endpoint = process.env.MEMORY_ENDPOINT
+  // 端点列表：MEMORY_ENDPOINTS（有序，优先） → MEMORY_ENDPOINT（单端点，兼容），
+  // endpoint 字段保留 = endpoints[0]，老调用方与老配置行为不变。
+  const endpoints = parseMemoryEndpoints(process.env.MEMORY_ENDPOINTS, process.env.MEMORY_ENDPOINT)
+  const endpoint = endpoints[0]
   const apiKey = process.env.API_KEY
   const serviceId = process.env.SERVICE_ID
   const teamId = process.env.TEAM_ID
@@ -71,6 +121,7 @@ export function loadConfig(): McpConfig {
   const userId = process.env.USER_ID
 
   const required: Array<[string, string | undefined]> = [
+    // 两者都没配时沿用原报错名 MEMORY_ENDPOINT，不破坏既有启动提示兼容性。
     ['MEMORY_ENDPOINT', endpoint],
     ['API_KEY', apiKey],
     ['SERVICE_ID', serviceId],
@@ -92,6 +143,7 @@ export function loadConfig(): McpConfig {
 
   return {
     endpoint: endpoint!,
+    endpoints,
     apiKey: apiKey!,
     serviceId: serviceId!,
     teamId: teamId!,
