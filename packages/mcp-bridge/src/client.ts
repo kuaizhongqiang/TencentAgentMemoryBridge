@@ -1,5 +1,11 @@
 export interface V3ClientConfig {
+  /** 主端点（= endpoints[0]）。仅传 endpoint 的老配置仍可用。 */
   endpoint: string
+  /**
+   * 有序端点列表（新配置）。读路径按顺序尝试，可回落到下一个；
+   * 写路径只用第一个。缺省时从 `[endpoint]` 派生。
+   */
+  endpoints?: string[]
   apiKey: string
   serviceId: string
   teamId: string
@@ -139,6 +145,48 @@ export function clampSearchLimit(limit: number | undefined): number | undefined 
 }
 
 /**
+ * 单个端点的尝试失败。
+ *
+ * `fallback=true` 表示这是一次"可回落"失败：网络错误、AbortError 超时、
+ * HTTP 5xx、非 JSON 响应（典型如 Cloudflare 502 HTML）——换下一个端点可能成功。
+ * `fallback=false` 表示"不可回落"失败：HTTP 4xx（鉴权/参数错）或 envelope
+ * `code!==0`（业务错误）——换端点也只是掩盖问题，直接抛给调用方。
+ */
+class EndpointAttemptError extends Error {
+  constructor(
+    message: string,
+    readonly fallback: boolean,
+  ) {
+    super(message)
+    this.name = 'EndpointAttemptError'
+  }
+}
+
+function normalizeBaseUrl(endpoint: string): string {
+  return endpoint.trim().replace(/\/+$/, '')
+}
+
+/** 按顺序去重（保留第一个出现的位置）。 */
+function dedupeEndpoints(endpoints: string[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const endpoint of endpoints) {
+    if (seen.has(endpoint)) continue
+    seen.add(endpoint)
+    out.push(endpoint)
+  }
+  return out
+}
+
+function errorName(err: unknown): string | undefined {
+  return typeof err === 'object' && err !== null ? (err as { name?: string }).name : undefined
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
+/**
  * v3 strict-isolation 数据面客户端（裸 HTTP，直连 MemoryCore Gateway）。
  *
  * 协议：
@@ -146,16 +194,29 @@ export function clampSearchLimit(limit: number | undefined): number | undefined 
  *   - 请求体带隔离三元组 team_id / agent_id / user_id
  *   - 写路径（conversation/add）必须带 session_id
  *   - 响应为 envelope { code, message, data }，code!==0 视为失败
+ *
+ * 端点回落（≥0.6.0）：
+ *   - 读路径（atomic/search、conversation/search、core/read、scenario/ls）按
+ *     `endpoints` 顺序尝试，遇到可回落失败自动换下一个（公网 Cloudflare 抖动时
+ *     优先落到 Tailscale 内网端点）。
+ *   - 写路径（conversation/add）**只用第一个端点、不回落**：请求可能已到达网关，
+ *     只是响应丢失；重发别的端点会造成重复写入。
+ *   - 每次尝试独立使用 `timeoutMs` 的 AbortController；全部失败时抛出的错误包含
+ *     每个尝试过的 endpoint 与失败原因。
  */
 export class V3MemoryClient {
-  private readonly baseUrl: string
+  private readonly endpoints: string[]
   private readonly headers: Record<string, string>
   private readonly iso: { team_id: string; agent_id: string; user_id: string; task_id?: string }
   private readonly sessionKey: string
   private readonly timeoutMs: number
 
   constructor(config: V3ClientConfig) {
-    this.baseUrl = config.endpoint.replace(/\/+$/, '')
+    // 向后兼容：老配置只给 endpoint → endpoints=[endpoint]；新配置给 endpoints 时按给定顺序。
+    const configured = (config.endpoints?.length ? config.endpoints : [config.endpoint])
+      .map(normalizeBaseUrl)
+      .filter((endpoint) => endpoint.length > 0)
+    this.endpoints = dedupeEndpoints(configured.length > 0 ? configured : [normalizeBaseUrl(config.endpoint)])
     this.headers = {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${config.apiKey}`,
@@ -171,42 +232,113 @@ export class V3MemoryClient {
     this.timeoutMs = config.timeoutMs ?? 15000
   }
 
-  private async post<T>(path: string, body: Record<string, unknown>): Promise<T> {
+  /**
+   * 向单个端点发起一次 POST 并读取响应文本。
+   * 网络错误/超时在这里统一转换成可回落失败（EndpointAttemptError）。
+   */
+  private async fetchOnce(
+    baseUrl: string,
+    path: string,
+    payload: string,
+  ): Promise<{ ok: boolean; status: number; text: string }> {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.timeoutMs)
     try {
-      const res = await fetch(`${this.baseUrl}${path}`, {
+      const res = await fetch(`${baseUrl}${path}`, {
         method: 'POST',
         headers: this.headers,
-        body: JSON.stringify(body),
+        body: payload,
         signal: controller.signal,
       })
       const text = await res.text()
-      let envelope: V3Envelope<T>
-      try {
-        envelope = JSON.parse(text) as V3Envelope<T>
-      } catch {
-        throw new Error(`MemoryCore ${path} returned non-JSON (${res.status}): ${text.slice(0, 300)}`)
+      return { ok: res.ok, status: res.status, text }
+    } catch (err) {
+      if (errorName(err) === 'AbortError' || controller.signal.aborted) {
+        throw new EndpointAttemptError(
+          `MemoryCore ${path} timeout after ${this.timeoutMs}ms at ${baseUrl}`,
+          true,
+        )
       }
-      const code = typeof envelope.code === 'number' ? envelope.code : undefined
-      if (!res.ok || (code !== undefined && code !== 0)) {
-        throw new Error(`MemoryCore ${path} error (${res.status}${code !== undefined ? ` code=${code}` : ''}): ${envelope.message ?? text.slice(0, 300)}`)
-      }
-      return (envelope.data ?? {}) as T
+      throw new EndpointAttemptError(
+        `MemoryCore ${path} fetch failed at ${baseUrl}: ${errorMessage(err)}`,
+        true,
+      )
     } finally {
       clearTimeout(timer)
     }
+  }
+
+  /** 对单个端点尝试一次完整请求（含 envelope 判定）。 */
+  private async postOnce<T>(baseUrl: string, path: string, body: Record<string, unknown>): Promise<T> {
+    const { ok, status, text } = await this.fetchOnce(baseUrl, path, JSON.stringify(body))
+    let envelope: V3Envelope<T>
+    try {
+      envelope = JSON.parse(text) as V3Envelope<T>
+    } catch {
+      // HTML 502 / 网关错误页：非 JSON 一律可回落，换端点试。
+      throw new EndpointAttemptError(
+        `MemoryCore ${path} returned non-JSON (${status}): ${text.slice(0, 300)}`,
+        true,
+      )
+    }
+    const code = typeof envelope.code === 'number' ? envelope.code : undefined
+    if (!ok) {
+      // 5xx 视为端点不可用可回落；4xx 是请求/鉴权错，换端点也一样，直接抛。
+      throw new EndpointAttemptError(
+        `MemoryCore ${path} error (${status}${code !== undefined ? ` code=${code}` : ''}): ${envelope.message ?? text.slice(0, 300)}`,
+        status >= 500,
+      )
+    }
+    if (code !== undefined && code !== 0) {
+      // 业务错误（envelope code!==0）不可回落：问题不在端点可用性，回落只会重复业务失败。
+      throw new EndpointAttemptError(
+        `MemoryCore ${path} error (${status} code=${code}): ${envelope.message ?? text.slice(0, 300)}`,
+        false,
+      )
+    }
+    return (envelope.data ?? {}) as T
+  }
+
+  /**
+   * 按端点顺序发送请求。
+   *
+   * @param allowFallback 读路径 true（依次尝试）；写路径 false（只用第一个端点）。
+   */
+  private async post<T>(path: string, body: Record<string, unknown>, allowFallback = true): Promise<T> {
+    const targets = allowFallback ? this.endpoints : this.endpoints.slice(0, 1)
+    const attempts: Array<{ endpoint: string; message: string }> = []
+    for (let i = 0; i < targets.length; i++) {
+      const baseUrl = targets[i]!
+      try {
+        return await this.postOnce<T>(baseUrl, path, body)
+      } catch (err) {
+        if (!(err instanceof EndpointAttemptError) || !err.fallback) throw err
+        attempts.push({ endpoint: baseUrl, message: err.message })
+        const next = targets[i + 1]
+        if (next) {
+          // 只能写 stderr：stdout 是 MCP stdio 协议的帧通道，写日志会破坏协议。
+          process.stderr.write(
+            `mcp-bridge: ${path} via ${baseUrl} failed (${err.message}); falling back to ${next}\n`,
+          )
+        }
+      }
+    }
+    const tried = attempts.map((a) => `${a.endpoint} → ${a.message}`).join('; ')
+    const scope = allowFallback ? '' : ' (write path: only the first endpoint is used, no fallback)'
+    throw new Error(
+      `MemoryCore ${path} failed after trying ${attempts.length} endpoint(s)${scope}: ${tried}`,
+    )
   }
 
   private baseBody(extra: Record<string, unknown> = {}): Record<string, unknown> {
     return { ...this.iso, ...extra }
   }
 
-  /** 写 L0：把一段对话写入短期记忆 */
+  /** 写 L0：把一段对话写入短期记忆（只走第一个端点，不回落，避免重复写入） */
   addConversation(messages: MemoryMessage[], sessionId?: string): Promise<ConversationAddData> {
     const sid = sessionId ?? this.sessionKey
     if (!sid) throw new Error('addConversation requires a session_id')
-    return this.post('/v3/conversation/add', this.baseBody({ session_id: sid, messages }))
+    return this.post('/v3/conversation/add', this.baseBody({ session_id: sid, messages }), false)
   }
 
   /** 查 L1：语义搜索原子事实 */

@@ -7,6 +7,7 @@ describe('loadConfig', () => {
 
   beforeEach(() => {
     process.env.MEMORY_ENDPOINT = 'https://memory.kuai-private.top'
+    delete process.env.MEMORY_ENDPOINTS
     process.env.API_KEY = 'sk-gate'
     process.env.SERVICE_ID = 'default'
     process.env.TEAM_ID = 'team-test'
@@ -100,5 +101,63 @@ describe('loadConfig', () => {
     delete process.env.TEAM_ID
     delete process.env.AGENT_ID
     expect(() => loadConfig()).toThrow(/TEAM_ID, AGENT_ID/)
+  })
+
+  it('derives endpoints=[endpoint] from MEMORY_ENDPOINT for backward compatibility', () => {
+    const config = loadConfig()
+    expect(config.endpoints).toEqual(['https://memory.kuai-private.top'])
+    // 兼容字段 endpoint = endpoints[0]
+    expect(config.endpoint).toBe(config.endpoints[0])
+  })
+
+  it('parses MEMORY_ENDPOINTS in order, trimming spaces and dropping empty entries', () => {
+    process.env.MEMORY_ENDPOINTS = ' http://100.64.0.5:3000 , , https://memory.kuai-private.top '
+    const config = loadConfig()
+    expect(config.endpoints).toEqual(['http://100.64.0.5:3000', 'https://memory.kuai-private.top'])
+    expect(config.endpoint).toBe('http://100.64.0.5:3000')
+  })
+
+  it('dedupes repeated MEMORY_ENDPOINTS entries while preserving order', () => {
+    process.env.MEMORY_ENDPOINTS = 'https://a.example,https://b.example,https://a.example/'
+    // 尾斜杠不同的不算重复（客户端归一化，配置层保留原样）
+    expect(loadConfig().endpoints).toEqual(['https://a.example', 'https://b.example', 'https://a.example/'])
+  })
+
+  it('MEMORY_ENDPOINTS takes precedence over MEMORY_ENDPOINT', () => {
+    process.env.MEMORY_ENDPOINTS = 'http://100.64.0.5:3000,https://memory.kuai-private.top'
+    const config = loadConfig()
+    expect(config.endpoints).toEqual(['http://100.64.0.5:3000', 'https://memory.kuai-private.top'])
+    expect(config.endpoint).toBe('http://100.64.0.5:3000')
+  })
+
+  it('falls back to MEMORY_ENDPOINT when MEMORY_ENDPOINTS is blank', () => {
+    process.env.MEMORY_ENDPOINTS = '  ,  , '
+    const config = loadConfig()
+    expect(config.endpoints).toEqual(['https://memory.kuai-private.top'])
+    expect(config.endpoint).toBe('https://memory.kuai-private.top')
+  })
+
+  it('accepts only http(s) MEMORY_ENDPOINTS entries', () => {
+    process.env.MEMORY_ENDPOINTS = 'https://memory.kuai-private.top,ftp://bad.example'
+    expect(() => loadConfig()).toThrow(/Invalid MEMORY_ENDPOINTS entry 'ftp:\/\/bad\.example'/)
+
+    process.env.MEMORY_ENDPOINTS = 'not-a-url'
+    expect(() => loadConfig()).toThrow(/Invalid MEMORY_ENDPOINTS entry 'not-a-url'/)
+
+    process.env.MEMORY_ENDPOINTS = 'https://ok.example,http://ok2.example:3000'
+    expect(loadConfig().endpoints).toEqual(['https://ok.example', 'http://ok2.example:3000'])
+  })
+
+  it('throws MEMORY_ENDPOINT when neither MEMORY_ENDPOINT nor MEMORY_ENDPOINTS is set', () => {
+    delete process.env.MEMORY_ENDPOINT
+    expect(() => loadConfig()).toThrow(/Missing required environment variable\(s\): MEMORY_ENDPOINT/)
+  })
+
+  it('allows MEMORY_ENDPOINTS without MEMORY_ENDPOINT', () => {
+    delete process.env.MEMORY_ENDPOINT
+    process.env.MEMORY_ENDPOINTS = 'http://100.64.0.5:3000,https://memory.kuai-private.top'
+    const config = loadConfig()
+    expect(config.endpoints).toHaveLength(2)
+    expect(config.endpoint).toBe('http://100.64.0.5:3000')
   })
 })

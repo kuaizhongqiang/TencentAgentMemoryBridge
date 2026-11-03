@@ -219,6 +219,240 @@ describe('V3MemoryClient', () => {
   })
 })
 
+/** 构造一个 fetch Response 替身（JSON body）。 */
+function jsonResponse(status: number, body: unknown) {
+  return { ok: status >= 200 && status < 300, status, text: async () => JSON.stringify(body) }
+}
+
+/** 构造一个 HTML 错误页（典型 Cloudflare 502）。 */
+function htmlResponse(status: number, html: string) {
+  return { ok: false, status, text: async () => html }
+}
+
+/** 模拟 AbortController 触发的超时错误。 */
+function abortError() {
+  return Object.assign(new Error('This operation was aborted'), { name: 'AbortError' })
+}
+
+/** 回落时会写一行 stderr 提示（stdout 保留给 MCP 协议），测试里静音。 */
+function silenceStderr() {
+  return vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+}
+
+const FALLBACK_CONFIG = {
+  ...CONFIG,
+  // endpoint 仅供老配置兼容；显式给 endpoints 时应以 endpoints 顺序为准。
+  endpoint: 'https://legacy-ignored.example',
+  endpoints: ['https://primary.example', 'https://secondary.example'],
+}
+
+describe('V3MemoryClient endpoint fallback', () => {
+  it('falls back to the next endpoint when fetch throws (network error)', async () => {
+    silenceStderr()
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockResolvedValueOnce(jsonResponse(200, { code: 0, data: { items: [{ id: 'a1', content: 'x' }] } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const client = new V3MemoryClient(FALLBACK_CONFIG)
+    const res = await client.searchAtomic('q')
+
+    expect(res.items).toHaveLength(1)
+    // 既有返回结构（含 _query 元信息）不因回落改变
+    expect(res.query).toEqual({ original_length: 1, sent_length: 1, clamped: false })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock.mock.calls[0]![0]).toBe('https://primary.example/v3/atomic/search')
+    expect(fetchMock.mock.calls[1]![0]).toBe('https://secondary.example/v3/atomic/search')
+  })
+
+  it('falls back to the next endpoint when the first endpoint times out (AbortError)', async () => {
+    silenceStderr()
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(abortError())
+      .mockResolvedValueOnce(jsonResponse(200, { code: 0, data: { messages: [{ content: 'hi' }] } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const client = new V3MemoryClient(FALLBACK_CONFIG)
+    const res = await client.searchConversations('hi')
+
+    expect(res.messages).toHaveLength(1)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock.mock.calls[1]![0]).toBe('https://secondary.example/v3/conversation/search')
+  })
+
+  it('falls back when the first endpoint returns non-JSON HTML (e.g. 502 Bad Gateway)', async () => {
+    silenceStderr()
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(htmlResponse(502, '<html><body>502 Bad Gateway</body></html>'))
+      .mockResolvedValueOnce(jsonResponse(200, { code: 0, data: { items: [] } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const client = new V3MemoryClient(FALLBACK_CONFIG)
+    await expect(client.searchAtomic('q')).resolves.toBeDefined()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock.mock.calls[1]![0]).toBe('https://secondary.example/v3/atomic/search')
+  })
+
+  it('falls back on HTTP 5xx with a JSON envelope', async () => {
+    silenceStderr()
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(503, { code: 503, message: 'upstream unavailable' }))
+      .mockResolvedValueOnce(jsonResponse(200, { code: 0, data: { items: [] } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const client = new V3MemoryClient(FALLBACK_CONFIG)
+    await expect(client.searchAtomic('q')).resolves.toBeDefined()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not fall back on HTTP 401 (auth error fails fast)', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(401, { code: 401, message: 'Expected: Bearer {api_key}' }))
+      .mockResolvedValueOnce(jsonResponse(200, { code: 0, data: { items: [] } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const client = new V3MemoryClient(FALLBACK_CONFIG)
+    await expect(client.searchAtomic('q')).rejects.toThrow(/401/)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0]![0]).toBe('https://primary.example/v3/atomic/search')
+  })
+
+  it('does not fall back on HTTP 400 (request contract error)', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(400, { code: 400, message: 'query: Too big' }))
+      .mockResolvedValueOnce(jsonResponse(200, { code: 0, data: { items: [] } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const client = new V3MemoryClient(FALLBACK_CONFIG)
+    await expect(client.searchAtomic('q')).rejects.toThrow(/400/)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not fall back on a business error envelope (code !== 0)', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { code: 1001, message: 'invalid user_key' }))
+      .mockResolvedValueOnce(jsonResponse(200, { code: 0, data: { items: [] } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const client = new V3MemoryClient(FALLBACK_CONFIG)
+    await expect(client.searchAtomic('q')).rejects.toThrow(/invalid user_key/)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('stops the chain at the first non-fallback error (no third endpoint)', async () => {
+    silenceStderr()
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockResolvedValueOnce(jsonResponse(401, { code: 401, message: 'unauthorized' }))
+      .mockResolvedValueOnce(jsonResponse(200, { code: 0, data: { items: [] } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const client = new V3MemoryClient({
+      ...CONFIG,
+      endpoints: ['https://primary.example', 'https://secondary.example', 'https://tertiary.example'],
+    })
+    await expect(client.searchAtomic('q')).rejects.toThrow(/401/)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock.mock.calls[1]![0]).toBe('https://secondary.example/v3/atomic/search')
+  })
+
+  it('lists every attempted endpoint when all endpoints fail', async () => {
+    silenceStderr()
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockRejectedValueOnce(new TypeError('getaddrinfo ENOTFOUND secondary.example'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const client = new V3MemoryClient(FALLBACK_CONFIG)
+    let caught: unknown
+    try {
+      await client.searchAtomic('q')
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBeInstanceOf(Error)
+    const err = caught as Error
+    expect(err.message).toMatch(/failed after trying 2 endpoint\(s\)/)
+    expect(err.message).toContain('https://primary.example')
+    expect(err.message).toContain('https://secondary.example')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports the timeout and endpoint when a single endpoint times out', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(abortError())
+    vi.stubGlobal('fetch', fetchMock)
+
+    const client = new V3MemoryClient(CONFIG)
+    await expect(client.searchAtomic('q')).rejects.toThrow(/timeout after 5000ms at https:\/\/memory\.kuai-private\.top/)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('addConversation uses only the first endpoint and never falls back', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockResolvedValueOnce(jsonResponse(200, { code: 0, data: { accepted_ids: ['m1'] } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const client = new V3MemoryClient(FALLBACK_CONFIG)
+    await expect(client.addConversation([{ role: 'user', content: 'hi' }])).rejects.toThrow(
+      /failed after trying 1 endpoint\(s\).*no fallback/,
+    )
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0]![0]).toBe('https://primary.example/v3/conversation/add')
+  })
+
+  it('addConversation does not fall back on a 502 either', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(htmlResponse(502, '<html>Bad Gateway</html>'))
+      .mockResolvedValueOnce(jsonResponse(200, { code: 0, data: { accepted_ids: ['m1'] } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const client = new V3MemoryClient(FALLBACK_CONFIG)
+    await expect(client.addConversation([{ role: 'user', content: 'hi' }])).rejects.toThrow(/failed after trying 1/)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('readCore and listScenarios both use the fallback chain', async () => {
+    silenceStderr()
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockResolvedValueOnce(jsonResponse(200, { code: 0, data: { content: 'persona' } }))
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockResolvedValueOnce(jsonResponse(200, { code: 0, data: { entries: [{ path: 'a/b' }] } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const client = new V3MemoryClient(FALLBACK_CONFIG)
+    await expect(client.readCore()).resolves.toEqual({ content: 'persona' })
+    await expect(client.listScenarios('proj/')).resolves.toEqual({ entries: [{ path: 'a/b' }] })
+
+    expect(fetchMock.mock.calls[1]![0]).toBe('https://secondary.example/v3/core/read')
+    expect(fetchMock.mock.calls[3]![0]).toBe('https://secondary.example/v3/scenario/ls')
+    const body = JSON.parse(fetchMock.mock.calls[3]![1]!.body as string)
+    expect(body.path_prefix).toBe('proj/')
+  })
+
+  it('normalizes trailing slashes on every endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { code: 0, data: { items: [] } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const client = new V3MemoryClient({ ...CONFIG, endpoints: ['https://a.example///', 'https://b.example'] })
+    await client.searchAtomic('q')
+    expect(fetchMock.mock.calls[0]![0]).toBe('https://a.example/v3/atomic/search')
+  })
+})
+
 describe('clampSearchQuery', () => {
   it('returns short queries verbatim (no trimming, no rewriting)', () => {
     expect(clampSearchQuery('coffee')).toBe('coffee')

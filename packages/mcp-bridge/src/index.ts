@@ -95,7 +95,7 @@ const TOOLS: Tool[] = [
 ]
 
 const server = new Server(
-  { name: 'tencent-agent-memory-mcp-bridge', version: '0.5.2' },
+  { name: 'tencent-agent-memory-mcp-bridge', version: '0.6.0' },
   { capabilities: { tools: {} } },
 )
 
