@@ -1,6 +1,6 @@
 # mcp-bridge v3 使用指南
 
-> **版本**: 0.5.0 · 面向团队版（MemoryCore `/v3/*`）
+> **版本**: 0.5.2 · 面向团队版（MemoryCore `/v3/*`）
 > **状态**: 全量重写完成，直连 MemoryCore Gateway，不再依赖 bridge-server
 
 ## 概述
@@ -13,6 +13,7 @@ mcp-bridge v3 是 MCP（Model Context Protocol）服务器，把 AI Agent 的记
 - ✅ 新增多层级召回（`recall_memory` 合并 L1 事实 + L3 persona + L2 场景索引）
 - ✅ 0.4.0：task_id 防混用校验（拒绝身份前缀）+ 工具结果 `_context` 回显隔离域
 - ✅ 0.5.0：新增 `search_conversations`（L0 原始对话检索）——L1 抽取是异步的，刚说过的内容走这条通道
+- ✅ 0.5.2：检索参数按网关契约钳制（`query ≤ 2048` 码元、`limit 1..100`），长 query 不再触发 HTTP 400；发生钳制时结果附 `_query` 元信息
 
 ## 配置
 
@@ -75,12 +76,20 @@ mcp-bridge 支持 **task_id** 做项目级区分：
 
 | 工具 | 映射到 v3 | 说明 |
 | --- | --- | --- |
-| `recall_memory(query, limit?, include_persona?, include_scenes?)` | `/v3/atomic/search` + `/v3/core/read` + `/v3/scenario/ls` | 多层级召回，返回 `{facts, persona?, scenes?, _context}` |
+| `recall_memory(query, limit?, include_persona?, include_scenes?)` | `/v3/atomic/search` + `/v3/core/read` + `/v3/scenario/ls` | 多层级召回，返回 `{facts, persona?, scenes?, _context, _query?}` |
 | `store_memory(user_content, assistant_content, session_key?)` | `/v3/conversation/add` | 写 L0，必填 session；返回 `{accepted_ids, _context}` |
-| `search_memories(query, limit?, type?)` | `/v3/atomic/search` | L1 语义搜索，返回 `{items, _context}` |
+| `search_memories(query, limit?, type?)` | `/v3/atomic/search` | L1 语义搜索，返回 `{items, _context, _query?}` |
 | `search_conversations(query, limit?, session_key?)` | `/v3/conversation/search` | L0 原始对话检索（≥0.5.0）。L1 抽取是异步的，刚说过的话尚未进事实索引时用这条；默认跨 session，传 `session_key` 才限定单会话 |
 
 > 工具不接受 `agent_id` / `task_id` 参数——身份与项目标签由 MCP env 注入，模型无需（也不应）猜测或混用。
+
+### 检索参数钳制（≥0.5.2）
+
+MemoryCore `/v3/atomic/search` 与 `/v3/conversation/search` 的 zod 契约是 `query: string(1..2048)`（JS `.length`，即 **UTF-16 码元**）和 `limit: int(1..100)`，超出直接 HTTP 400。mcp-bridge 在发请求前统一钳制，避免 `recall_memory` / `search_memories` / `search_conversations` 因长输入报错：
+
+- **query**：≤2048 码元**逐字原样**发送（不 trim、不改写）；超长时取 `head 1600 码元 + "\n...\n" + tail 400 码元`（合计 2005 码元，≤2048），且两端切割**不切断 UTF-16 代理对**（emoji 不会被截成半个）；空白 query 直接报 `query is required`，不发请求。
+- **limit**：`undefined` 继续省略该字段（用网关默认 5）；非有限数忽略；其余向下取整后钳到 `1..100`（如 `999→100`、`0→1`、`2.7→2`）。
+- **`_query` 回显**：仅当 query 真的被截断时，工具结果额外包含 `_query: {original_length, sent_length, clamped}`，调用方由此知道本次检索用的是 head+tail 摘要而非完整原文。
 
 ## 本地测试
 

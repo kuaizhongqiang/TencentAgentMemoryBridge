@@ -20,12 +20,14 @@ const TOOLS: Tool[] = [
       'Recall relevant memories for the CURRENT task (project). Returns L1 facts (project-scoped by task_id) plus optionally L3 persona and L2 scene index. ' +
       'Identity (team_id/agent_id/user_id) and task_id are fixed by the MCP server environment — never pass or guess them. ' +
       'agent_id is the platform identity (agt-*), task_id is the project label; they are different concepts and must not be mixed. ' +
+      'Queries longer than 2048 UTF-16 code units are clamped by the bridge (head+tail); when that happens the result carries a ' +
+      '_query block with original_length/sent_length. ' +
       'Results include a _context block echoing the active isolation domain.',
     inputSchema: {
       type: 'object',
       properties: {
-        query: { type: 'string', description: 'Search query for relevant memories' },
-        limit: { type: 'number', description: 'Max L1 facts to return (default 5)' },
+        query: { type: 'string', description: 'Search query for relevant memories (clamped to 2048 UTF-16 code units)' },
+        limit: { type: 'number', description: 'Max L1 facts to return (default 5, clamped to 1..100)' },
         include_persona: { type: 'boolean', description: 'Include L3 persona (default true)' },
         include_scenes: { type: 'boolean', description: 'Include L2 scene index (default false)' },
       },
@@ -54,12 +56,14 @@ const TOOLS: Tool[] = [
     description:
       'Semantic search across L1 atomic memories of the CURRENT task (project-scoped by task_id). ' +
       'Identity and task_id come from the MCP server environment — do not pass agent_id/team_id/user_id/task_id. ' +
+      'Queries longer than 2048 UTF-16 code units are clamped by the bridge (head+tail); when that happens the result carries a ' +
+      '_query block with original_length/sent_length. ' +
       'Results include a _context block echoing the active isolation domain.',
     inputSchema: {
       type: 'object',
       properties: {
-        query: { type: 'string', description: 'Search query' },
-        limit: { type: 'number', description: 'Maximum number of results' },
+        query: { type: 'string', description: 'Search query (clamped to 2048 UTF-16 code units)' },
+        limit: { type: 'number', description: 'Maximum number of results (clamped to 1..100)' },
         type: { type: 'string', description: 'Filter by memory type' },
       },
       required: ['query'],
@@ -72,12 +76,14 @@ const TOOLS: Tool[] = [
       'isolation domain. L1 extraction is asynchronous, so freshly captured turns may not be in the fact index yet — ' +
       'this tool reads the captured turns directly and is the right fallback for "what exactly did we say about X". ' +
       'Identity and task_id come from the MCP server environment — do not pass agent_id/team_id/user_id/task_id. ' +
+      'Queries longer than 2048 UTF-16 code units are clamped by the bridge (head+tail); when that happens the result carries a ' +
+      '_query block with original_length/sent_length. ' +
       'Results include a _context block echoing the active isolation domain.',
     inputSchema: {
       type: 'object',
       properties: {
-        query: { type: 'string', description: 'Search query' },
-        limit: { type: 'number', description: 'Max messages to return (default 5)' },
+        query: { type: 'string', description: 'Search query (clamped to 2048 UTF-16 code units)' },
+        limit: { type: 'number', description: 'Max messages to return (default 5, clamped to 1..100)' },
         session_key: {
           type: 'string',
           description: 'Optional: restrict the search to a single session id. Omit to search across all sessions.',
@@ -89,7 +95,7 @@ const TOOLS: Tool[] = [
 ]
 
 const server = new Server(
-  { name: 'tencent-agent-memory-mcp-bridge', version: '0.5.0' },
+  { name: 'tencent-agent-memory-mcp-bridge', version: '0.5.2' },
   { capabilities: { tools: {} } },
 )
 
@@ -134,6 +140,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         if (includePersona && persona?.content) result.persona = persona.content
         if (includeScenes && scenes?.entries?.length) result.scenes = scenes.entries
+        // 发生钳制时回显 query 元信息：调用方可知实际检索的只是 head+tail 摘要。
+        if (facts.query.clamped) result._query = facts.query
         result._context = contextEcho()
         return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
       }
@@ -155,10 +163,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           limit: args?.limit as number | undefined,
           type: args?.type as string | undefined,
         })
+        const out: Record<string, unknown> = { items: data.items ?? [] }
+        if (data.query.clamped) out._query = data.query
+        out._context = contextEcho()
         return {
-          content: [
-            { type: 'text', text: JSON.stringify({ items: data.items ?? [], _context: contextEcho() }) },
-          ],
+          content: [{ type: 'text', text: JSON.stringify(out) }],
         }
       }
 
@@ -167,13 +176,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           limit: args?.limit as number | undefined,
           sessionId: (args?.session_key as string | undefined) || undefined,
         })
+        const out: Record<string, unknown> = { messages: data.messages ?? [] }
+        if (data.query.clamped) out._query = data.query
+        out._context = contextEcho()
         return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({ messages: data.messages ?? [], _context: contextEcho() }),
-            },
-          ],
+          content: [{ type: 'text', text: JSON.stringify(out) }],
         }
       }
 
