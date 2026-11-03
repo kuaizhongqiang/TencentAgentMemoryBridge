@@ -56,6 +56,89 @@ export interface ConversationAddData {
 }
 
 /**
+ * MemoryCore Gateway 检索端点的硬约束（v2.0.3 `/v3/atomic/search` 与 `/v3/conversation/search`）：
+ *   query: z.string().min(1).max(2048) —— JS String.length，即 **UTF-16 码元**，不是码点
+ *   limit: z.int().min(1).max(100)     —— 缺省 5
+ * 超出即 HTTP 400（`query: Too big` / `limit: Too big`）。mcp-bridge 在客户端边缘钳制，
+ * 避免长 query / 大 limit 直接打断召回（上游 issue #1928 / PR #1933 只在 hermes 客户端修过）。
+ */
+export const MAX_SEARCH_QUERY_CHARS = 2048
+export const MIN_SEARCH_LIMIT = 1
+export const MAX_SEARCH_LIMIT = 100
+/** 超长 query 保留的头部码元数 */
+export const SEARCH_QUERY_HEAD_CHARS = 1600
+/** 超长 query 保留的尾部码元数 */
+export const SEARCH_QUERY_TAIL_CHARS = 400
+/** 截断标记（5 个码元）：1600 + 5 + 400 = 2005 ≤ 2048，绝不越界。 */
+export const SEARCH_QUERY_ELLIPSIS = '\n...\n'
+
+/** 检索请求的 query 钳制元信息，工具层据此回显 `_query`。 */
+export interface SearchQueryInfo {
+  /** 调用方传入的 query 原始 .length（UTF-16 码元） */
+  original_length: number
+  /** 实际发给网关的 query .length；未截断时与 original_length 相同 */
+  sent_length: number
+  /** 是否因超出 2048 码元上限而被截断 */
+  clamped: boolean
+}
+
+function isHighSurrogate(codeUnit: number): boolean {
+  return codeUnit >= 0xd800 && codeUnit <= 0xdbff
+}
+
+function isLowSurrogate(codeUnit: number): boolean {
+  return codeUnit >= 0xdc00 && codeUnit <= 0xdfff
+}
+
+/**
+ * 从头部取 max 个码元，但不切断 UTF-16 代理对。
+ * 若切割点正好落在高代理之后，则回退一个码元（宁可少一个字，也不产生孤立代理）。
+ */
+function sliceHeadSafe(text: string, max: number): string {
+  let end = Math.min(max, text.length)
+  if (end > 0 && end < text.length && isHighSurrogate(text.charCodeAt(end - 1))) end -= 1
+  return text.slice(0, end)
+}
+
+/** 从尾部取 max 个码元，同样不切断代理对（切割点落在低代理上时左移一个码元）。 */
+function sliceTailSafe(text: string, max: number): string {
+  let start = Math.max(0, text.length - max)
+  if (start > 0 && start < text.length && isLowSurrogate(text.charCodeAt(start))) start += 1
+  return text.slice(start)
+}
+
+/**
+ * 把检索 query 钳制到网关上限。
+ *
+ * - `length ≤ 2048`：**逐字原样返回**（不 trim、不改写）。
+ * - 超长：head 1600 码元 + `"\n...\n"` + tail 400 码元（合计 2005 码元），
+ *   两端切割都不会切断 UTF-16 代理对。
+ * - 空白 query（空串 / 仅空白 / 非字符串）：抛 `query is required`，调用方不得发请求。
+ */
+export function clampSearchQuery(query: string): string {
+  if (typeof query !== 'string' || query.trim().length === 0) {
+    throw new Error('query is required')
+  }
+  if (query.length <= MAX_SEARCH_QUERY_CHARS) return query
+  const head = sliceHeadSafe(query, SEARCH_QUERY_HEAD_CHARS)
+  const tail = sliceTailSafe(query, SEARCH_QUERY_TAIL_CHARS)
+  return `${head}${SEARCH_QUERY_ELLIPSIS}${tail}`
+}
+
+/**
+ * 把检索 limit 钳制到网关允许的整数区间。
+ *
+ * - `undefined` → 返回 `undefined`，调用方继续省略该字段（沿用网关默认 5）；
+ * - 非有限数 / 非数字 → 同样忽略（返回 `undefined`，不让 NaN 变成 JSON `null` 触发 400）；
+ * - 其余向下取整后再钳到 `[1, 100]`（网关是 `z.int()`，2.7 必须变成 2）。
+ */
+export function clampSearchLimit(limit: number | undefined): number | undefined {
+  if (limit == null) return undefined
+  if (typeof limit !== 'number' || !Number.isFinite(limit)) return undefined
+  return Math.min(MAX_SEARCH_LIMIT, Math.max(MIN_SEARCH_LIMIT, Math.floor(limit)))
+}
+
+/**
  * v3 strict-isolation 数据面客户端（裸 HTTP，直连 MemoryCore Gateway）。
  *
  * 协议：
@@ -127,31 +210,50 @@ export class V3MemoryClient {
   }
 
   /** 查 L1：语义搜索原子事实 */
-  searchAtomic(
+  async searchAtomic(
     query: string,
     opts: { limit?: number; type?: string; sessionId?: string } = {},
-  ): Promise<{ items?: AtomicItem[] }> {
+  ): Promise<{ items?: AtomicItem[]; query: SearchQueryInfo }> {
+    // 网关契约 query≤2048 码元 / limit 1..100；空白 query 在这里就抛错，不浪费一次 400。
+    const sentQuery = clampSearchQuery(query)
+    const queryInfo: SearchQueryInfo = {
+      original_length: query.length,
+      sent_length: sentQuery.length,
+      clamped: sentQuery !== query,
+    }
     const body = this.baseBody({
       session_id: opts.sessionId ?? this.sessionKey,
-      query,
-      limit: opts.limit,
+      query: sentQuery,
+      limit: clampSearchLimit(opts.limit),
       type: opts.type,
     })
     for (const k of ['limit', 'type']) if (body[k] === undefined) delete body[k]
-    return this.post('/v3/atomic/search', body)
+    const data = await this.post<{ items?: AtomicItem[] }>('/v3/atomic/search', body)
+    return { ...data, query: queryInfo }
   }
 
   /** 搜 L0：检索原始对话（BM25 + 向量） */
-  searchConversations(
+  async searchConversations(
     query: string,
     opts: { limit?: number; sessionId?: string } = {},
-  ): Promise<{ messages?: ConversationHit[] }> {
+  ): Promise<{ messages?: ConversationHit[]; query: SearchQueryInfo }> {
     // 与 /v3/conversation/search 的语义保持一致：**不传 session_id 即跨 session 检索**，
     // 传了才把结果限制在该会话内。L1 抽取是异步的，L0 搜索是"刚说过的话"的兜底通道。
-    const body: Record<string, unknown> = { query, limit: opts.limit }
+    // 该端点与 /v3/atomic/search 共享同一套校验：query≤2048 码元、limit 1..100。
+    const sentQuery = clampSearchQuery(query)
+    const queryInfo: SearchQueryInfo = {
+      original_length: query.length,
+      sent_length: sentQuery.length,
+      clamped: sentQuery !== query,
+    }
+    const body: Record<string, unknown> = { query: sentQuery, limit: clampSearchLimit(opts.limit) }
     if (body.limit === undefined) delete body.limit
     if (opts.sessionId) body.session_id = opts.sessionId
-    return this.post('/v3/conversation/search', this.baseBody(body))
+    const data = await this.post<{ messages?: ConversationHit[] }>(
+      '/v3/conversation/search',
+      this.baseBody(body),
+    )
+    return { ...data, query: queryInfo }
   }
 
   /** 读 L3：agent 长期画像（persona） */

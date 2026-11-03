@@ -1,6 +1,6 @@
 # DeepSeek Harness 接入指南（mcp-bridge v3）
 
-> **版本**: 0.4.0 · DeepSeek Harness（DSH）接入团队版记忆（MemoryCore `/v3/*`）
+> **版本**: 0.5.2 · DeepSeek Harness（DSH）接入团队版记忆（MemoryCore `/v3/*`）
 > **接入方式**: DSH 原生 MCP 客户端（`@deepseek-ai/dsh-mcp-client`）→ 本项目 `mcp-bridge`（stdio）→ MemoryCore `/v3/*`
 
 ## 概述
