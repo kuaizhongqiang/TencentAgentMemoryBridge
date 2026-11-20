@@ -1,3 +1,6 @@
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+
 export interface McpConfig {
   /** MemoryCore Gateway 主地址（= endpoints[0]，兼容老配置的单一 endpoint 字段） */
   endpoint: string
@@ -26,6 +29,12 @@ export interface McpConfig {
   sessionKey: string
   /** 单次请求超时（毫秒） */
   timeoutMs: number
+  /** 会话级 task 绑定文件（TBP）：只存 task_id/title/bound_at，不存任何 key */
+  taskBindingPath: string
+  /** serve 白名单：只有名单内的 AGENT_ID 能 task_create / task_close（默认空 = MCP 侧全部拒绝） */
+  taskAdminAgentIds: string[]
+  /** memory_brief 字符预算（默认 8000 ≈ 2.7K token） */
+  briefBudgetChars: number
 }
 
 function generateSessionKey(agentId: string): string {
@@ -153,5 +162,16 @@ export function loadConfig(): McpConfig {
     taskId,
     sessionKey: process.env.SESSION_KEY || generateSessionKey(agentId!),
     timeoutMs,
+    taskBindingPath:
+      process.env.TASK_BINDING_PATH?.trim() ||
+      join(homedir(), '.tencent-agent-memory', 'task-bindings.json'),
+    taskAdminAgentIds: (process.env.TASK_ADMIN_AGENT_IDS ?? '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter((id) => id.length > 0),
+    briefBudgetChars:
+      Number.isFinite(Number(process.env.BRIEF_BUDGET_CHARS)) && Number(process.env.BRIEF_BUDGET_CHARS) > 0
+        ? Math.floor(Number(process.env.BRIEF_BUDGET_CHARS))
+        : 8000,
   }
 }
