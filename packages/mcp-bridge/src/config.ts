@@ -1,3 +1,6 @@
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+
 export interface McpConfig {
   /** MemoryCore Gateway 主地址（= endpoints[0]，兼容老配置的单一 endpoint 字段） */
   endpoint: string
@@ -26,6 +29,12 @@ export interface McpConfig {
   sessionKey: string
   /** 单次请求超时（毫秒） */
   timeoutMs: number
+  /** 会话级 task 绑定文件（TBP）：只存 task_id/title/bound_at，不存任何 key */
+  taskBindingPath: string
+  /** serve 白名单：只有名单内的 AGENT_ID 能 task_create / task_close（默认空 = MCP 侧全部拒绝） */
+  taskAdminAgentIds: string[]
+  /** memory_brief 字符预算（默认 8000 ≈ 2.7K token） */
+  briefBudgetChars: number
 }
 
 function generateSessionKey(agentId: string): string {
@@ -109,6 +118,34 @@ function assertValidTaskId(taskId: string, source: 'TASK_ID' | 'cwd'): string {
   return trimmed
 }
 
+/**
+ * 调用方自带 task_id 的形状（引擎 v2.0.4 `/v3/meta/task/create` 同规则）：
+ * 3–64 字符、字母数字开头、只允许 `[A-Za-z0-9._-]`。
+ */
+export const CUSTOM_TASK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$/
+
+/**
+ * 校验 `task_create` 传入的自定义 task_id（让 serve 能建可读 id，如
+ * `MechanicalDesignVirtualMuseum`）。规则与引擎一致，并在客户端提前拒绝身份前缀——
+ * 别把 `agt-*` / `team-*` 写成 task_id。
+ */
+export function assertCustomTaskId(taskId: string): string {
+  const trimmed = String(taskId ?? '').trim()
+  if (!CUSTOM_TASK_ID_PATTERN.test(trimmed)) {
+    throw new Error(
+      `Invalid task_id '${trimmed}': must match ^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$ ` +
+        '(3-64 chars, alphanumeric first, only letters/digits/dot/underscore/hyphen).',
+    )
+  }
+  if (IDENTITY_PREFIXES.test(trimmed)) {
+    throw new Error(
+      `Invalid task_id '${trimmed}': task_id is a project-level label and must NOT be an identity id ` +
+        '(agt-*/team-*/usr-*/uky-*/sk-*).',
+    )
+  }
+  return trimmed
+}
+
 export function loadConfig(): McpConfig {
   // 端点列表：MEMORY_ENDPOINTS（有序，优先） → MEMORY_ENDPOINT（单端点，兼容），
   // endpoint 字段保留 = endpoints[0]，老调用方与老配置行为不变。
@@ -153,5 +190,16 @@ export function loadConfig(): McpConfig {
     taskId,
     sessionKey: process.env.SESSION_KEY || generateSessionKey(agentId!),
     timeoutMs,
+    taskBindingPath:
+      process.env.TASK_BINDING_PATH?.trim() ||
+      join(homedir(), '.tencent-agent-memory', 'task-bindings.json'),
+    taskAdminAgentIds: (process.env.TASK_ADMIN_AGENT_IDS ?? '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter((id) => id.length > 0),
+    briefBudgetChars:
+      Number.isFinite(Number(process.env.BRIEF_BUDGET_CHARS)) && Number(process.env.BRIEF_BUDGET_CHARS) > 0
+        ? Math.floor(Number(process.env.BRIEF_BUDGET_CHARS))
+        : 8000,
   }
 }

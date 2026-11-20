@@ -11,6 +11,8 @@ export interface V3ClientConfig {
   teamId: string
   agentId: string
   userId: string
+  /** 团队 user_key（meta 面 `/v3/meta/*` 鉴权：只有 Bearer 会 401）；缺省则 task_* 不可用 */
+  userKey?: string
   sessionKey: string
   taskId?: string
   timeoutMs?: number
@@ -32,7 +34,12 @@ export interface AtomicItem {
   content: string
   type?: string
   score?: number
+  /** 任务类原子（work_task）的优先级，brief 用来排序 */
+  priority?: number
+  /** 任务类原子的元数据 JSON（status / deadline / owner …） */
+  metadata_json?: string
   updated_at?: string
+  created_at?: string
 }
 
 export interface ConversationHit {
@@ -59,6 +66,21 @@ export interface ConversationAddData {
   accepted_ids?: string[]
   accepted_versions?: string[]
   total_count?: number
+}
+
+/** meta 面任务实体（TBP：`/v3/meta/task/*`） */
+export interface TaskEntity {
+  task_id: string
+  team_id: string
+  creator_user_id: string
+  title: string
+  description?: string | null
+  status?: string
+  source_type?: string
+  source_url?: string | null
+  created_at?: string
+  updated_at?: string
+  metadata_json?: string
 }
 
 /**
@@ -207,7 +229,12 @@ function errorMessage(err: unknown): string {
 export class V3MemoryClient {
   private readonly endpoints: string[]
   private readonly headers: Record<string, string>
-  private readonly iso: { team_id: string; agent_id: string; user_id: string; task_id?: string }
+  /** meta 面请求头：在数据面基础上加 `x-tdai-user-key`（没有 userKey 时与数据面相同） */
+  private readonly metaHeaders: Record<string, string>
+  private readonly iso: { team_id: string; agent_id: string; user_id: string }
+  private readonly configTaskId?: string
+  /** TBP：会话级绑定（优先于 config.taskId） */
+  private boundTaskId?: string
   private readonly sessionKey: string
   private readonly timeoutMs: number
 
@@ -222,12 +249,16 @@ export class V3MemoryClient {
       Authorization: `Bearer ${config.apiKey}`,
       'x-tdai-service-id': config.serviceId,
     }
+    this.metaHeaders = {
+      ...this.headers,
+      ...(config.userKey ? { 'x-tdai-user-key': config.userKey } : {}),
+    }
     this.iso = {
       team_id: config.teamId,
       agent_id: config.agentId,
       user_id: config.userId,
-      ...(config.taskId ? { task_id: config.taskId } : {}),
     }
+    this.configTaskId = config.taskId
     this.sessionKey = config.sessionKey
     this.timeoutMs = config.timeoutMs ?? 15000
   }
@@ -240,13 +271,14 @@ export class V3MemoryClient {
     baseUrl: string,
     path: string,
     payload: string,
+    headers: Record<string, string> = this.headers,
   ): Promise<{ ok: boolean; status: number; text: string }> {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.timeoutMs)
     try {
       const res = await fetch(`${baseUrl}${path}`, {
         method: 'POST',
-        headers: this.headers,
+        headers,
         body: payload,
         signal: controller.signal,
       })
@@ -269,8 +301,13 @@ export class V3MemoryClient {
   }
 
   /** 对单个端点尝试一次完整请求（含 envelope 判定）。 */
-  private async postOnce<T>(baseUrl: string, path: string, body: Record<string, unknown>): Promise<T> {
-    const { ok, status, text } = await this.fetchOnce(baseUrl, path, JSON.stringify(body))
+  private async postOnce<T>(
+    baseUrl: string,
+    path: string,
+    body: Record<string, unknown>,
+    headers: Record<string, string> = this.headers,
+  ): Promise<T> {
+    const { ok, status, text } = await this.fetchOnce(baseUrl, path, JSON.stringify(body), headers)
     let envelope: V3Envelope<T>
     try {
       envelope = JSON.parse(text) as V3Envelope<T>
@@ -304,13 +341,18 @@ export class V3MemoryClient {
    *
    * @param allowFallback 读路径 true（依次尝试）；写路径 false（只用第一个端点）。
    */
-  private async post<T>(path: string, body: Record<string, unknown>, allowFallback = true): Promise<T> {
+  private async post<T>(
+    path: string,
+    body: Record<string, unknown>,
+    allowFallback = true,
+    headers: Record<string, string> = this.headers,
+  ): Promise<T> {
     const targets = allowFallback ? this.endpoints : this.endpoints.slice(0, 1)
     const attempts: Array<{ endpoint: string; message: string }> = []
     for (let i = 0; i < targets.length; i++) {
       const baseUrl = targets[i]!
       try {
-        return await this.postOnce<T>(baseUrl, path, body)
+        return await this.postOnce<T>(baseUrl, path, body, headers)
       } catch (err) {
         if (!(err instanceof EndpointAttemptError) || !err.fallback) throw err
         attempts.push({ endpoint: baseUrl, message: err.message })
@@ -330,8 +372,44 @@ export class V3MemoryClient {
     )
   }
 
+  /** 当前生效的 task_id（TBP 会话绑定优先于 config.taskId） */
+  currentTaskId(): string | undefined {
+    return this.boundTaskId ?? this.configTaskId
+  }
+
+  /** 当前 task_id 的来源，供 `_context.task_source` 回显 */
+  taskSource(): 'binding' | 'config' | 'none' {
+    if (this.boundTaskId) return 'binding'
+    return this.configTaskId ? 'config' : 'none'
+  }
+
+  /** TBP：切换会话绑定；null 表示解绑并回落到 config.taskId */
+  setTaskId(taskId: string | null): void {
+    this.boundTaskId = taskId ?? undefined
+  }
+
   private baseBody(extra: Record<string, unknown> = {}): Record<string, unknown> {
-    return { ...this.iso, ...extra }
+    const taskId = this.currentTaskId()
+    return { ...this.iso, ...(taskId ? { task_id: taskId } : {}), ...extra }
+  }
+
+  /**
+   * meta 面请求：必须 userKey，否则明确报错（不做静默 401 重试）。
+   *
+   * @param allowFallback 读路径 true（task/get、task/list…）；写路径 false（create/update）。
+   *   meta 写请求可能与数据面写一样「已落地但响应丢失」，回落换端点会重复建任务/重复改状态。
+   */
+  private async metaPost<T>(
+    path: string,
+    body: Record<string, unknown>,
+    allowFallback = true,
+  ): Promise<T> {
+    if (!this.metaHeaders['x-tdai-user-key']) {
+      throw new Error(
+        'meta 通道不可用：/v3/meta/* 需要 USER_KEY（x-tdai-user-key）——只有 apiKey/Bearer 不够。',
+      )
+    }
+    return this.post<T>(path, body, allowFallback, this.metaHeaders)
   }
 
   /** 写 L0：把一段对话写入短期记忆（只走第一个端点，不回落，避免重复写入） */
@@ -344,7 +422,13 @@ export class V3MemoryClient {
   /** 查 L1：语义搜索原子事实 */
   async searchAtomic(
     query: string,
-    opts: { limit?: number; type?: string; sessionId?: string } = {},
+    opts: {
+      limit?: number
+      type?: string
+      sessionId?: string
+      time_start?: string
+      time_end?: string
+    } = {},
   ): Promise<{ items?: AtomicItem[]; query: SearchQueryInfo }> {
     // 网关契约 query≤2048 码元 / limit 1..100；空白 query 在这里就抛错，不浪费一次 400。
     const sentQuery = clampSearchQuery(query)
@@ -358,10 +442,28 @@ export class V3MemoryClient {
       query: sentQuery,
       limit: clampSearchLimit(opts.limit),
       type: opts.type,
+      time_start: opts.time_start,
+      time_end: opts.time_end,
     })
-    for (const k of ['limit', 'type']) if (body[k] === undefined) delete body[k]
+    for (const k of ['limit', 'type', 'time_start', 'time_end']) if (body[k] === undefined) delete body[k]
     const data = await this.post<{ items?: AtomicItem[] }>('/v3/atomic/search', body)
     return { ...data, query: queryInfo }
+  }
+
+  /** 分页查 L1（按 type / 时间窗，updated_time DESC）：brief 用它拉 work_task / work_fact */
+  atomicQuery(
+    opts: { type?: string; time_start?: string; time_end?: string; limit?: number; offset?: number } = {},
+  ): Promise<{ items?: AtomicItem[]; total?: number }> {
+    const body = this.baseBody({
+      type: opts.type,
+      time_start: opts.time_start,
+      time_end: opts.time_end,
+      limit: clampSearchLimit(opts.limit),
+      offset: opts.offset,
+    })
+    for (const k of ['type', 'time_start', 'time_end', 'limit', 'offset'])
+      if (body[k] === undefined) delete body[k]
+    return this.post('/v3/atomic/query', body)
   }
 
   /** 搜 L0：检索原始对话（BM25 + 向量） */
@@ -396,5 +498,50 @@ export class V3MemoryClient {
   /** 列 L2：场景导航索引 */
   listScenarios(pathPrefix = ''): Promise<{ entries?: ScenarioEntry[] }> {
     return this.post('/v3/scenario/ls', this.baseBody({ path_prefix: pathPrefix }))
+  }
+
+  // ── 任务注册表（meta 面，TBP v1：需要 USER_KEY） ─────────────────────────
+
+  /** 建任务（serve 白名单 agent）：不传 task_id 时由引擎发号 task-xxxx */
+  createTask(input: {
+    /** 可选自定义 id（≥2.0.4 引擎支持：3–64、[A-Za-z0-9][A-Za-z0-9._-]{2,63}）；不传则引擎发号 */
+    task_id?: string
+    title: string
+    description?: string
+    status?: string
+    linked_agents?: Array<{ agent_id: string; role_in_task?: string }>
+  }): Promise<TaskEntity> {
+    return this.metaPost('/v3/meta/task/create', {
+      team_id: this.iso.team_id,
+      creator_user_id: this.iso.user_id,
+      ...(input.task_id ? { task_id: input.task_id } : {}),
+      title: input.title,
+      ...(input.description ? { description: input.description } : {}),
+      ...(input.status ? { status: input.status } : {}),
+      linked_agents: input.linked_agents ?? [{ agent_id: this.iso.agent_id, role_in_task: 'owner' }],
+    }, false)
+  }
+
+  getTask(taskId: string): Promise<TaskEntity> {
+    return this.metaPost('/v3/meta/task/get', { task_id: taskId })
+  }
+
+  listTasks(opts: { status?: string; limit?: number; offset?: number } = {}): Promise<{
+    items?: TaskEntity[]
+    total?: number
+  }> {
+    const body: Record<string, unknown> = { team_id: this.iso.team_id }
+    if (opts.status) body.status = opts.status
+    if (opts.limit !== undefined) body.limit = opts.limit
+    if (opts.offset !== undefined) body.offset = opts.offset
+    return this.metaPost('/v3/meta/task/list', body)
+  }
+
+  updateTask(taskId: string, patch: Record<string, unknown>): Promise<TaskEntity> {
+    return this.metaPost('/v3/meta/task/update', { task_id: taskId, ...patch }, false)
+  }
+
+  listTaskAgents(taskId: string): Promise<{ items?: unknown[]; total?: number }> {
+    return this.metaPost('/v3/meta/task-agent/list', { task_id: taskId, limit: 100, offset: 0 })
   }
 }
