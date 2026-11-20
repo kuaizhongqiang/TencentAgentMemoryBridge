@@ -502,8 +502,10 @@ export class V3MemoryClient {
 
   // ── 任务注册表（meta 面，TBP v1：需要 USER_KEY） ─────────────────────────
 
-  /** 建任务（serve 白名单 agent）：引擎发号 task-xxxx */
+  /** 建任务（serve 白名单 agent）：不传 task_id 时由引擎发号 task-xxxx */
   createTask(input: {
+    /** 可选自定义 id（≥2.0.4 引擎支持：3–64、[A-Za-z0-9][A-Za-z0-9._-]{2,63}）；不传则引擎发号 */
+    task_id?: string
     title: string
     description?: string
     status?: string
@@ -512,6 +514,7 @@ export class V3MemoryClient {
     return this.metaPost('/v3/meta/task/create', {
       team_id: this.iso.team_id,
       creator_user_id: this.iso.user_id,
+      ...(input.task_id ? { task_id: input.task_id } : {}),
       title: input.title,
       ...(input.description ? { description: input.description } : {}),
       ...(input.status ? { status: input.status } : {}),

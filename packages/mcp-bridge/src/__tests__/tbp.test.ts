@@ -4,7 +4,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { V3MemoryClient } from '../client.js'
-import { TaskBindingStore } from '../binding.js'
+import { TaskBindingStore, unbindIfMatches } from '../binding.js'
+import { assertCustomTaskId } from '../config.js'
 import { composeBrief, digestPersona, openWorkTasks } from '../brief.js'
 
 const CONFIG = {
@@ -209,5 +210,132 @@ describe('TBP: meta channel 与端点策略', () => {
     expect(res.query.original_length).toBe(6000)
     expect(res.query.sent_length).toBeLessThanOrEqual(2048)
     expect(res.query.clamped).toBe(true)
+  })
+})
+
+describe('TBP: task_close 解绑判定（只解绑自己关掉的那个任务）', () => {
+  it('绑定 A、关闭 B → 绑定仍是 A，client 域不变；关闭 A 才解绑', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mcp-unbind-'))
+    const path = join(dir, 'bindings.json')
+    const store = new TaskBindingStore(path)
+    store.set('s1', { task_id: 'task-A' })
+
+    const client = new V3MemoryClient(CONFIG)
+    client.setTaskId('task-A')
+
+    const unboundB = unbindIfMatches(store, 's1', 'task-B')
+    if (unboundB) client.setTaskId(null)
+    expect(unboundB).toBe(false)
+    expect(store.get('s1')?.task_id).toBe('task-A')
+    expect(client.currentTaskId()).toBe('task-A')
+    expect(client.taskSource()).toBe('binding')
+
+    const unboundA = unbindIfMatches(store, 's1', 'task-A')
+    if (unboundA) client.setTaskId(null)
+    expect(unboundA).toBe(true)
+    expect(store.get('s1')).toBeUndefined()
+    // 解绑后回落到 config.taskId
+    expect(client.currentTaskId()).toBe('projA')
+    expect(client.taskSource()).toBe('config')
+
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('会话本来没绑定时 close 不会误报 unbound', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mcp-unbind2-'))
+    const path = join(dir, 'bindings.json')
+    const store = new TaskBindingStore(path)
+    expect(unbindIfMatches(store, 's2', 'task-A')).toBe(false)
+    rmSync(dir, { recursive: true, force: true })
+  })
+})
+
+describe('TBP: 自定义 task_id', () => {
+  it('接受可读 id，拒绝形状非法与身份前缀', () => {
+    expect(assertCustomTaskId('MechanicalDesignMuseum')).toBe('MechanicalDesignMuseum')
+    expect(assertCustomTaskId('  abc  ')).toBe('abc')
+    expect(() => assertCustomTaskId('ab')).toThrow(/must match/)
+    expect(() => assertCustomTaskId('-abc')).toThrow(/must match/)
+    expect(() => assertCustomTaskId('a'.repeat(65))).toThrow(/must match/)
+    expect(() => assertCustomTaskId('has space')).toThrow(/must match/)
+    expect(() => assertCustomTaskId('agt-test')).toThrow(/must NOT be an identity id/)
+    expect(() => assertCustomTaskId('team-x')).toThrow(/must NOT be an identity id/)
+    expect(() => assertCustomTaskId('')).toThrow(/must match/)
+  })
+
+  it('createTask 把自定义 task_id 放进 meta 请求体', async () => {
+    const fetchMock = mockFetchOnce(200, {
+      code: 0,
+      message: 'ok',
+      data: { task_id: 'MyTask-1', team_id: 'team-test', creator_user_id: 'usr-test', title: 'T' },
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const client = new V3MemoryClient(CONFIG)
+    await client.createTask({ task_id: 'MyTask-1', title: 'T' })
+
+    const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string)
+    expect(body.task_id).toBe('MyTask-1')
+    expect(fetchMock.mock.calls[0]![0]).toBe('https://memory.kuai-private.top/v3/meta/task/create')
+  })
+
+  it('不传 task_id 时不把 undefined 塞进请求体（让引擎发号）', async () => {
+    const fetchMock = mockFetchOnce(200, {
+      code: 0,
+      message: 'ok',
+      data: { task_id: 'task-xxxx', team_id: 'team-test', creator_user_id: 'usr-test', title: 'T' },
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const client = new V3MemoryClient(CONFIG)
+    await client.createTask({ title: 'T' })
+    const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string)
+    expect(body).not.toHaveProperty('task_id')
+  })
+})
+
+describe('TBP: 网络错误回落', () => {
+  it('fetch 抛网络错误（端点不可达）时回落备用端点', async () => {
+    silenceStderr()
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ code: 0, message: 'ok', data: { items: [{ id: 'a1', content: 'x' }] } }),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const client = new V3MemoryClient(FALLBACK_CONFIG)
+    const res = await client.searchAtomic('q')
+
+    expect(res.items).toHaveLength(1)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock.mock.calls[0]![0]).toBe('https://primary.example/v3/atomic/search')
+    expect(fetchMock.mock.calls[1]![0]).toBe('https://secondary.example/v3/atomic/search')
+  })
+
+  it('meta 读路径同样在网络错误时回落', async () => {
+    silenceStderr()
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({
+            code: 0,
+            message: 'ok',
+            data: { task_id: 'task-1', team_id: 'team-test', creator_user_id: 'usr-test', title: 'T' },
+          }),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const client = new V3MemoryClient(FALLBACK_CONFIG)
+    const task = await client.getTask('task-1')
+    expect(task.task_id).toBe('task-1')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 })

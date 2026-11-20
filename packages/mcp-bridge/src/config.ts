@@ -118,6 +118,34 @@ function assertValidTaskId(taskId: string, source: 'TASK_ID' | 'cwd'): string {
   return trimmed
 }
 
+/**
+ * 调用方自带 task_id 的形状（引擎 v2.0.4 `/v3/meta/task/create` 同规则）：
+ * 3–64 字符、字母数字开头、只允许 `[A-Za-z0-9._-]`。
+ */
+export const CUSTOM_TASK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$/
+
+/**
+ * 校验 `task_create` 传入的自定义 task_id（让 serve 能建可读 id，如
+ * `MechanicalDesignVirtualMuseum`）。规则与引擎一致，并在客户端提前拒绝身份前缀——
+ * 别把 `agt-*` / `team-*` 写成 task_id。
+ */
+export function assertCustomTaskId(taskId: string): string {
+  const trimmed = String(taskId ?? '').trim()
+  if (!CUSTOM_TASK_ID_PATTERN.test(trimmed)) {
+    throw new Error(
+      `Invalid task_id '${trimmed}': must match ^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$ ` +
+        '(3-64 chars, alphanumeric first, only letters/digits/dot/underscore/hyphen).',
+    )
+  }
+  if (IDENTITY_PREFIXES.test(trimmed)) {
+    throw new Error(
+      `Invalid task_id '${trimmed}': task_id is a project-level label and must NOT be an identity id ` +
+        '(agt-*/team-*/usr-*/uky-*/sk-*).',
+    )
+  }
+  return trimmed
+}
+
 export function loadConfig(): McpConfig {
   // 端点列表：MEMORY_ENDPOINTS（有序，优先） → MEMORY_ENDPOINT（单端点，兼容），
   // endpoint 字段保留 = endpoints[0]，老调用方与老配置行为不变。

@@ -7,9 +7,9 @@ import {
   CallToolRequestSchema,
   type Tool,
 } from '@modelcontextprotocol/sdk/types.js'
-import { loadConfig } from './config.js'
+import { loadConfig, assertCustomTaskId } from './config.js'
 import { V3MemoryClient } from './client.js'
-import { TaskBindingStore } from './binding.js'
+import { TaskBindingStore, unbindIfMatches } from './binding.js'
 import { composeBrief, digestPersona, trimScenes } from './brief.js'
 
 const config = loadConfig()
@@ -63,7 +63,11 @@ const TOOLS: Tool[] = [
         },
         time_start: { type: 'string', description: 'ISO8601 lower bound (updated_at)' },
         time_end: { type: 'string', description: 'ISO8601 upper bound (updated_at)' },
-        include_persona: { type: 'boolean', description: 'Include a DIGESTED L3 persona (default true)' },
+        include_persona: {
+          type: 'boolean',
+          description:
+            'Include a DIGESTED L3 persona (default false; memory_brief already carries persona_digest)',
+        },
         include_scenes: { type: 'boolean', description: 'Include the L2 scene index (path/updated_at only, default false)' },
       },
       required: ['query'],
@@ -131,11 +135,17 @@ const TOOLS: Tool[] = [
     name: 'task_create',
     description:
       'Create a TASK ENTITY (meta_tasks) — SERVE AGENT ONLY. The deployment must list this AGENT_ID in TASK_ADMIN_AGENT_IDS and provide USER_KEY. ' +
-      'The server mints an immutable task_id (task-xxxx); creator is the configured user, and this MCP session is bound to it immediately. ' +
-      'Never invent a task_id string.',
+      'Without task_id the server mints task-xxxx; passing task_id lets a serve agent use a readable, immutable id ' +
+      '(3-64 chars, ^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$, identity prefixes rejected). ' +
+      'Creator is the configured user, and this MCP session is bound to it immediately.',
     inputSchema: {
       type: 'object',
       properties: {
+        task_id: {
+          type: 'string',
+          description:
+            'Optional custom id (engine >= 2.0.4): 3-64 chars, ^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$; omit to let the engine mint task-xxxx',
+        },
         title: { type: 'string', description: 'Short task title' },
         description: { type: 'string', description: 'What needs to be done' },
         status: { type: 'string', description: 'running (default) | completed' },
@@ -241,7 +251,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'recall_memory': {
         const query = args?.query as string
         const limit = args?.limit as number | undefined
-        const includePersona = args?.include_persona !== false
+        // TBP：persona 默认不取（memory_brief 已给 persona_digest）；要就显式 include_persona=true，
+        // 避免每次召回都多打一次 core/read + 摘要，跟「预算化召回」的初衷相反。
+        const includePersona = args?.include_persona === true
         const includeScenes = args?.include_scenes === true
 
         const [facts, persona, scenes] = await Promise.all([
@@ -309,11 +321,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         const title = String(args?.title ?? '').trim()
         if (!title) throw new Error('task_create requires a title')
+        // 可选自定义 id：在客户端就按引擎规则校验，省一次 400 往返。
+        const customTaskId = args?.task_id ? assertCustomTaskId(String(args.task_id)) : undefined
         const agentIds =
           Array.isArray(args?.agent_ids) && args.agent_ids.length
             ? (args.agent_ids as string[])
             : [config.agentId]
         const task = await client.createTask({
+          ...(customTaskId ? { task_id: customTaskId } : {}),
           title,
           description: args?.description as string | undefined,
           status: (args?.status as string | undefined) ?? 'running',
@@ -368,8 +383,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const taskId = String(args?.task_id ?? '').trim()
         if (!taskId) throw new Error('task_close requires task_id')
         const task = await client.updateTask(taskId, { status: 'completed' })
-        const unbound = bindingStore.clear(config.sessionKey)
-        if (client.currentTaskId() === taskId) client.setTaskId(null)
+        // 只解绑「关掉的就是当前绑定的任务」；关别的任务不能顺手清掉本会话的域。
+        const unbound = unbindIfMatches(bindingStore, config.sessionKey, taskId)
+        if (unbound) client.setTaskId(null)
         return text({ task, unbound, _context: contextEcho() })
       }
 

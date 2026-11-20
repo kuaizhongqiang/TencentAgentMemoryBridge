@@ -71,3 +71,19 @@ export class TaskBindingStore {
     return true
   }
 }
+
+/**
+ * 关闭任务时的解绑判定：只有「本次关闭的正是本会话绑定的任务」才解绑。
+ *
+ * serve 会话绑定 A、去关 B 时必须保留 A 的绑定——否则 `task_close` 会顺手把
+ * 当前会话的上下文打回 `config.taskId`，后续读写落到错误的 project 桶。
+ */
+export function unbindIfMatches(
+  store: TaskBindingStore,
+  sessionKey: string,
+  taskId: string,
+): boolean {
+  const bound = store.get(sessionKey)
+  if (!bound || bound.task_id !== taskId) return false
+  return store.clear(sessionKey)
+}
